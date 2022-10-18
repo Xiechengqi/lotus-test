@@ -621,12 +621,6 @@ over the worker address if this flag is set.`,
 
 			Comment: ``,
 		},
-		{
-			Name: "SectorIndexApiInfos",
-			Type: "[]string",
-
-			Comment: ``,
-		},
 	},
 	"ProvingConfig": []DocField{
 		{

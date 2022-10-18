@@ -116,7 +116,6 @@ func waitForSync(stmgr *stmgr.StateManager, epochs int, subscribe func()) {
 
 	// we are not synced, subscribe to head changes and wait for sync
 	stmgr.ChainStore().SubscribeHeadChanges(func(rev, app []*types.TipSet) error {
-		log.Infof("octopus: reorg: waitForSync")
 		if len(app) == 0 {
 			return nil
 		}

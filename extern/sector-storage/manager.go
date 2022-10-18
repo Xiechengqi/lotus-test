@@ -3,12 +3,8 @@ package sectorstorage
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/filecoin-project/go-statestore"
@@ -253,112 +249,6 @@ func (m *Manager) AddWorker(ctx context.Context, w Worker) error {
 	return m.sched.runWorker(ctx, wid, whnd)
 }
 
-func (m *Manager) SetWorkerAbility(ctx context.Context, workerId uuid.UUID, ability string) error {
-	m.sched.workersLk.Lock()
-	defer m.sched.workersLk.Unlock()
-	existingsWorkerId := false
-	for wid, v := range m.sched.workers {
-		if uuid.UUID(wid) == workerId {
-			existingsWorkerId = true
-			v.info.TaskResourcesLk.Lock()
-			defer v.info.TaskResourcesLk.Unlock()
-
-			splitArr := strings.Split(ability, ",")
-			for _, part := range splitArr {
-				if strings.Contains(part, "PC1:") {
-					splitPart := strings.Split(part, ":")
-					if intCount, err := strconv.Atoi(splitPart[1]); err == nil {
-						if _, ok := v.info.TaskResources[sealtasks.TTPreCommit1]; ok {
-							v.info.TaskResources[sealtasks.TTPreCommit1].LimitCount = intCount
-							log.Infof("worker %v PreCommit1 LimitCount is changed to %d", v.info.Hostname, intCount)
-						}
-					}
-				} else if strings.Contains(part, "PC2C2:") {
-					splitPart := strings.Split(part, ":")
-					if intCount, err := strconv.Atoi(splitPart[1]); err == nil {
-						if _, ok := v.info.TaskResources[sealtasks.TTAnyOfPC2C2]; ok {
-							v.info.TaskResources[sealtasks.TTAnyOfPC2C2].LimitCount = intCount
-							log.Infof("worker %v PreCommit2 & Commit2 LimitCount is changed to %d", v.info.Hostname, intCount)
-						}
-					}
-				} else if strings.Contains(part, "PC2:") {
-					splitPart := strings.Split(part, ":")
-					if intCount, err := strconv.Atoi(splitPart[1]); err == nil {
-						if _, ok := v.info.TaskResources[sealtasks.TTPreCommit2]; ok {
-							v.info.TaskResources[sealtasks.TTPreCommit2].LimitCount = intCount
-							log.Infof("worker %v PreCommit2 LimitCount is changed to %d", v.info.Hostname, intCount)
-						}
-					}
-				} else if strings.Contains(part, "C2:") {
-					splitPart := strings.Split(part, ":")
-					if intCount, err := strconv.Atoi(splitPart[1]); err == nil {
-						if _, ok := v.info.TaskResources[sealtasks.TTCommit2]; ok {
-							v.info.TaskResources[sealtasks.TTCommit2].LimitCount = intCount
-							log.Infof("worker %v Commit2 LimitCount is changed to %d", v.info.Hostname, intCount)
-						}
-					}
-				} else if strings.Contains(part, "AP:") {
-					splitPart := strings.Split(part, ":")
-					if intCount, err := strconv.Atoi(splitPart[1]); err == nil {
-						if _, ok := v.info.TaskResources[sealtasks.TTAddPiece]; ok {
-							v.info.TaskResources[sealtasks.TTAddPiece].LimitCount = intCount
-							log.Infof("worker %v AddPiece LimitCount is changed to %d", v.info.Hostname, intCount)
-						}
-					}
-				} else if strings.Contains(part, "RU:") {
-					splitPart := strings.Split(part, ":")
-					if intCount, err := strconv.Atoi(splitPart[1]); err == nil {
-						if _, ok := v.info.TaskResources[sealtasks.TTReplicaUpdate]; ok {
-							v.info.TaskResources[sealtasks.TTReplicaUpdate].LimitCount = intCount
-							log.Infof("worker %v ReplicaUpdate LimitCount is changed to %d", v.info.Hostname, intCount)
-						}
-					}
-				} else if strings.Contains(part, "PR1") {
-					splitPart := strings.Split(part, ":")
-					if intCount, err := strconv.Atoi(splitPart[1]); err == nil {
-						if _, ok := v.info.TaskResources[sealtasks.TTProveReplicaUpdate1]; ok {
-							v.info.TaskResources[sealtasks.TTProveReplicaUpdate1].LimitCount = intCount
-							log.Infof("worker %v TTProveReplicaUpdate1 LimitCount is changed to %d", v.info.Hostname, intCount)
-						}
-					}
-				} else if strings.Contains(part, "PR2") {
-					splitPart := strings.Split(part, ":")
-					if intCount, err := strconv.Atoi(splitPart[1]); err == nil {
-						if _, ok := v.info.TaskResources[sealtasks.TTProveReplicaUpdate2]; ok {
-							v.info.TaskResources[sealtasks.TTProveReplicaUpdate2].LimitCount = intCount
-							log.Infof("worker %v TTProveReplicaUpdate2 LimitCount is changed to %d", v.info.Hostname, intCount)
-						}
-					}
-				}
-			}
-		}
-	}
-	if !existingsWorkerId {
-		return xerrors.Errorf("workerId %v doesn't exists", workerId)
-	}
-	return nil
-}
-
-func (m *Manager) GetWorkerAbility(ctx context.Context) ([]storiface.WorkerAbility, error) {
-	var workerAbilities []storiface.WorkerAbility
-	for wid, v := range m.sched.workers {
-		var taskAbility []storiface.TaskAbility
-		for tt, tc := range v.info.TaskResources {
-			taskAbility = append(taskAbility, storiface.TaskAbility{
-				Task:  tt,
-				Limit: tc.LimitCount,
-				Run:   tc.RunCount,
-			})
-		}
-		workerAbilities = append(workerAbilities, storiface.WorkerAbility{
-			TaskAbilities: taskAbility,
-			WorkerId:      uuid.UUID(wid),
-			Hostname:      v.info.Hostname,
-		})
-	}
-	return workerAbilities, nil
-}
-
 func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	m.remoteHnd.ServeHTTP(w, r)
 }
@@ -524,62 +414,8 @@ func (m *Manager) SealPreCommit1(ctx context.Context, sector storage.SectorRef, 
 
 	selector := newAllocSelector(m.index, storiface.FTCache|storiface.FTSealed, storiface.PathSealing)
 
-	//preserved := os.Getenv("PRESERVED_ABILITY")
-	//log.Infof("ENV PRESERVED_ABILITY=%s", preserved)
-	//preservedWorker := os.Getenv("PRESERVED_WORKER")
-	//log.Infof("ENV PRESERVED_WORKER=%s", preservedWorker)
-	//
-	//if preserved != "" && preservedWorker != ""{
-	//	storages, err := m.localStore.Local(ctx)
-	//	if err == nil {
-	//		for _, storage := range storages {
-	//			if storage.CanSeal {
-	//				fs, fsErr := fsutil.FileSize(storage.LocalPath)
-	//				if fsErr == nil {
-	//					log.Infof("octopus: DiskUsage %s %d", storage.LocalPath, fs.OnDisk)
-	//					minDiskUsage := envWithDefault(stores.MinDiskUsage, "MIN_DISK_USAGE")
-	//					if fs.OnDisk < minDiskUsage {
-	//						wid, err := uuid.Parse(preservedWorker)
-	//						if err == nil {
-	//							resetAbility(ctx, wid, m, sealtasks.TTPreCommit1, fmt.Sprintf("PC1:%s", preserved))
-	//						}
-	//						break
-	//					}
-	//				} else {
-	//					log.Errorf("octopus: FileSize %s error: %v", storage.LocalPath, fsErr)
-	//				}
-	//			}
-	//		}
-	//	}
-	//}
-
 	err = m.sched.Schedule(ctx, sector, sealtasks.TTPreCommit1, selector, m.schedFetch(sector, storiface.FTUnsealed, storiface.PathSealing, storiface.AcquireMove), func(ctx context.Context, w Worker) error {
-		//if preserved == "" {
-		//	storages, err := m.localStore.Local(ctx)
-		//	if err == nil {
-		//		for _, storage := range storages {
-		//			if storage.CanSeal {
-		//				fs, fsErr := fsutil.FileSize(storage.LocalPath)
-		//				if fsErr == nil {
-		//					log.Infof("octopus: DiskUsage %s %d", storage.LocalPath, fs.OnDisk)
-		//					maxDiskUsage := envWithDefault(stores.MaxDiskUsage, "MAX_DISK_USAGE")
-		//					if fs.OnDisk > maxDiskUsage {
-		//						wid, sessionErr := w.Session(ctx)
-		//						if sessionErr == nil {
-		//							resetAbility(ctx, wid, m, sealtasks.TTPreCommit1, "PC1:0")
-		//							return storiface.Err(storiface.ErrTempAllocateSpace, xerrors.Errorf(storiface.NotEnoughSpace))
-		//						} else {
-		//							log.Errorf("octopus: get session id error: %v", sessionErr)
-		//						}
-		//					}
-		//				} else {
-		//					log.Errorf("octopus: FileSize %s error: %v", storage.LocalPath, fsErr)
-		//				}
-		//			}
-		//		}
-		//	}
-		//}
-		err = m.startWork(ctx, w, wk)(w.SealPreCommit1(ctx, sector, ticket, pieces))
+		err := m.startWork(ctx, w, wk)(w.SealPreCommit1(ctx, sector, ticket, pieces))
 		if err != nil {
 			return err
 		}
@@ -592,50 +428,6 @@ func (m *Manager) SealPreCommit1(ctx context.Context, sector storage.SectorRef, 
 	}
 
 	return out, waitErr
-}
-
-func envWithDefault(defaultValue int64, envVar string) int64 {
-	envValue := defaultValue
-	str := os.Getenv(envVar)
-	if str != "" {
-		m, err := strconv.ParseInt(str, 10, 64)
-		if err == nil {
-			envValue = m
-		}
-	}
-	return envValue
-}
-
-func resetAbility(ctx context.Context, wid uuid.UUID, m *Manager, taskType sealtasks.TaskType, newAbility string) {
-	abilities, aErr := m.GetWorkerAbility(ctx)
-	if aErr != nil {
-		log.Errorf("octopus: get old ability error %v", aErr)
-		return
-	}
-	oriLimit := -1
-	for _, a := range abilities {
-		if a.WorkerId == wid {
-			for _, ta := range a.TaskAbilities {
-				if ta.Task == taskType {
-					oriLimit = ta.Limit
-					break
-				}
-			}
-			break
-		}
-	}
-
-	if aErr := m.SetWorkerAbility(ctx, wid, newAbility); aErr != nil {
-		log.Errorf("octopus: reset worker %v ability to %s", wid, newAbility)
-	} else {
-		if oriLimit > 0 {
-			os.Setenv("PRESERVED_ABILITY", fmt.Sprintf("%d", oriLimit))
-			os.Setenv("PRESERVED_WORKER", wid.String())
-		} else {
-			os.Setenv("PRESERVED_ABILITY", "")
-			os.Setenv("PRESERVED_WORKER", "")
-		}
-	}
 }
 
 func (m *Manager) SealPreCommit2(ctx context.Context, sector storage.SectorRef, phase1Out storage.PreCommit1Out) (out storage.SectorCids, err error) {
@@ -829,11 +621,6 @@ func (m *Manager) FinalizeSector(ctx context.Context, sector storage.SectorRef, 
 		return err
 	}
 
-	//在上一步w.FinalizeSector中，文件已经上传完毕，并且已经触发清理，所以此处文件一定是不会存在的，我们不需要继续下一步的MoveStorage操作。
-	if ffiwrapper.QiniuFeatureEnabled(ffiwrapper.QiniuFeatureFinalizeUploadAutoClean) {
-		return nil
-	}
-
 	fetchSel := newAllocSelector(m.index, storiface.FTCache|storiface.FTSealed, storiface.PathStorage)
 	moveUnsealed := unsealed
 	{
@@ -963,7 +750,7 @@ func (m *Manager) ReleaseSectorKey(ctx context.Context, sector storage.SectorRef
 		return xerrors.Errorf("acquiring sector lock: %w", err)
 	}
 
-	return m.storage.Remove(context.WithValue(ctx, "forceRemove", true), sector.ID, storiface.FTSealed, true, nil)
+	return m.storage.Remove(ctx, sector.ID, storiface.FTSealed, true, nil)
 }
 
 func (m *Manager) ReleaseReplicaUpgrade(ctx context.Context, sector storage.SectorRef) error {

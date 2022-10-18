@@ -1,15 +1,12 @@
 package dagstore
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -333,27 +330,6 @@ func (w *Wrapper) MigrateDeals(ctx context.Context, deals []storagemarket.MinerD
 		}
 	}()
 
-	carMap := make(map[string]string)
-	log.Info("CAR_PATH_FILE", os.Getenv("CAR_PATH_FILE"))
-	if os.Getenv("CAR_PATH_FILE") != "" {
-		f, err := os.Open(os.Getenv("CAR_PATH_FILE"))
-		if err != nil {
-			log.Errorf("open %s err: %v", os.Getenv("CAR_PATH_FILE"), err)
-		} else {
-			defer f.Close()
-
-			reader := bufio.NewReader(f)
-			for {
-				line, _, err := reader.ReadLine()
-				if err == io.EOF {
-					break
-				}
-				car_pid := strings.SplitN(string(line), " ", 2)
-				carMap[car_pid[1]] = car_pid[0]
-				log.Infof("%s %s", car_pid[0], car_pid[1])
-			}
-		}
-	}
 	// Filter for deals that are handed off.
 	//
 	// If the deal has not yet been handed off to the sealing subsystem, we
@@ -373,19 +349,12 @@ func (w *Wrapper) MigrateDeals(ctx context.Context, deals []storagemarket.MinerD
 			continue
 		}
 
-		log.Infow("registering deal in dagstore with lazy init. pieceCid", pieceCid)
+		log.Infow("registering deal in dagstore with lazy init")
 
 		// Register the deal as a shard with the DAG store with lazy initialization.
 		// The index will be populated the first time the deal is retrieved, or
 		// through the bulk initialization script.
-		proposalCid := deal.ProposalCid.String()
-		log.Info("proposal cid: ", proposalCid)
-		if carPath, ok := carMap[proposalCid]; ok {
-			log.Infof("register %s to path %s", proposalCid, carPath)
-			err = w.RegisterShard(ctx, pieceCid, carPath, true, resch)
-		} else {
-			err = w.RegisterShard(ctx, pieceCid, "", false, resch)
-		}
+		err = w.RegisterShard(ctx, pieceCid, "", false, resch)
 		if err != nil {
 			log.Warnw("failed to register shard", "error", err)
 			continue

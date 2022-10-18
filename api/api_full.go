@@ -633,8 +633,6 @@ type FullNode interface {
 	// It takes the following params: <multisig address>, <proposed transaction ID> <signer address>
 	MsigApprove(context.Context, address.Address, uint64, address.Address) (*MessagePrototype, error) //perm:sign
 
-	MsigCancelSimple(context.Context, address.Address, uint64, address.Address) (*MessagePrototype, error) //perm:sign
-
 	// MsigApproveTxnHash approves a previously-proposed multisig message, specified
 	// using both transaction ID and a hash of the parameters used in the
 	// proposal. This method of approval can be used to ensure you only approve
@@ -651,8 +649,6 @@ type FullNode interface {
 	// It takes the following params: <multisig address>, <proposed transaction ID>, <recipient address>, <value to transfer>,
 	// <sender address of the cancel msg>, <method to call in the proposed message>, <params to include in the proposed message>
 	MsigCancelTxnHash(context.Context, address.Address, uint64, address.Address, types.BigInt, address.Address, uint64, []byte) (*MessagePrototype, error) //perm:sign
-
-	//MsigCancelSimple(context.Context, address.Address, uint64, address.Address, types.BigInt, address.Address, uint64, []byte) (*MessagePrototype, error) //perm:sign
 
 	// MsigAddPropose proposes adding a signer in the multisig
 	// It takes the following params: <multisig address>, <sender address of the propose msg>,
@@ -742,9 +738,6 @@ type FullNode interface {
 	// LOTUS_BACKUP_BASE_PATH environment variable set to some path, and that
 	// the path specified when calling CreateBackup is within the base path
 	CreateBackup(ctx context.Context, fpath string) error //perm:admin
-
-	// octopus:
-	NetExchangeCosts(ctx context.Context) ([]ExchangeClientCost, error) //perm:read
 }
 
 type StorageAsk struct {
@@ -1220,12 +1213,4 @@ type MsigTransaction struct {
 	Params []byte
 
 	Approved []address.Address
-}
-
-// octopus: FullNodePool list
-type FnpItem struct {
-	ID      string
-	Latest  abi.ChainEpoch
-	Err     string
-	Current bool
 }

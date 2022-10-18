@@ -31,8 +31,6 @@ var sealingCmd = &cli.Command{
 		workersCmd(true),
 		sealingSchedDiagCmd,
 		sealingAbortCmd,
-		sealingAbilityCmd,
-		sealingSetAbilityCmd,
 	},
 }
 
@@ -349,62 +347,5 @@ var sealingAbortCmd = &cli.Command{
 		fmt.Printf("aborting job %s, task %s, sector %d, running on host %s\n", job.ID.String(), job.Task.Short(), job.Sector.Number, job.Hostname)
 
 		return nodeApi.SealingAbort(ctx, job.ID)
-	},
-}
-
-var sealingSetAbilityCmd = &cli.Command {
-	Name:  "set-ability",
-	Usage: "set task ability",
-	ArgsUsage: "[WorkerId PC1:10,PC2:1,C2:1]",
-	Action: func(cctx *cli.Context) error {
-		if cctx.Args().Len() != 2 {
-			return xerrors.Errorf("expected 2 argument")
-		}
-
-		nodeApi, closer, err := lcli.GetStorageMinerAPI(cctx)
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		workerId := cctx.Args().First()
-		newAbility := cctx.Args().Get(1)
-		ctx := lcli.ReqContext(cctx)
-		widUUID, err := uuid.Parse(workerId)
-		if err != nil {
-			return nil
-		}
-
-		err = nodeApi.WorkerSetAbility(ctx, widUUID, newAbility)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("Set worker %s ability to %s successfully.\n", workerId, newAbility)
-		return nil
-	},
-}
-
-var sealingAbilityCmd = &cli.Command {
-	Name: "ability",
-	Usage: "get task abilities",
-	Action: func(cctx *cli.Context) error {
-		nodeApi, closer, err := lcli.GetStorageMinerAPI(cctx)
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		ctx := lcli.ReqContext(cctx)
-		m, _ := nodeApi.WorkerGetAbility(ctx)
-		for _, v := range m {
-			fmt.Printf("Worker Id: %v, Hostname: %s", v.WorkerId, v.Hostname)
-			fmt.Println()
-
-			for _, t := range v.TaskAbilities {
-				fmt.Printf("%v: Limit=%d Run=%d\n", t.Task, t.Limit, t.Run)
-			}
-			fmt.Println()
-		}
-		return nil
 	},
 }

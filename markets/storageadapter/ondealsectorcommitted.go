@@ -57,7 +57,7 @@ func newSectorCommittedManager(ev eventsCalledAPI, dealInfo dealInfoAPI, dpcAPI 
 	}
 }
 
-func (mgr *SectorCommittedManager) OnDealSectorPreCommitted(ctx context.Context, provider address.Address, proposal market.DealProposal, publishCid cid.Cid, publishEpoch abi.ChainEpoch, callback storagemarket.DealSectorPreCommittedCallback) error {
+func (mgr *SectorCommittedManager) OnDealSectorPreCommitted(ctx context.Context, provider address.Address, proposal market.DealProposal, publishCid cid.Cid, callback storagemarket.DealSectorPreCommittedCallback) error {
 	// Ensure callback is only called once
 	var once sync.Once
 	cb := func(sectorNumber abi.SectorNumber, isActive bool, err error) {
@@ -68,15 +68,8 @@ func (mgr *SectorCommittedManager) OnDealSectorPreCommitted(ctx context.Context,
 
 	// First check if the deal is already active, and if so, bail out
 	checkFunc := func(ctx context.Context, ts *types.TipSet) (done bool, more bool, err error) {
-		if ts.Height() <= publishEpoch+abi.ChainEpoch(10) {
-			log.Errorf("octopus: checkFunc check height=%v <= publish height=%v + 10", ts.Height(), publishEpoch)
-			return false, true, nil
-		}
-
-		log.Infof("octopus: OnDealSectorPreCommitted checkFunc publishCid %v at ts: %v", publishCid, ts.Height())
 		dealInfo, isActive, err := mgr.checkIfDealAlreadyActive(ctx, ts, &proposal, publishCid)
 		if err != nil {
-			log.Errorf("%v", err)
 			// Note: the error returned from here will end up being returned
 			// from OnDealSectorPreCommitted so no need to call the callback
 			// with the error
@@ -148,17 +141,10 @@ func (mgr *SectorCommittedManager) OnDealSectorPreCommitted(ctx context.Context,
 			return true, nil
 		}
 
-		if ts.Height() <= publishEpoch+abi.ChainEpoch(10) {
-			//log.Errorf("octopus: called check height=%v <= publish height=%v + 10", ts.Height(), publishEpoch)
-			return true, nil
-		}
-
 		// When there is a reorg, the deal ID may change, so get the
 		// current deal ID from the publish message CID
-		//log.Infof("octopus: OnDealSectorPreCommitted called publishCid %v at ts: %v", publishCid, ts.Height())
 		res, err := mgr.dealInfo.GetCurrentDealInfo(ctx, ts.Key().Bytes(), &proposal, publishCid)
 		if err != nil {
-			log.Errorf("%v", err)
 			return false, err
 		}
 
@@ -203,7 +189,7 @@ func (mgr *SectorCommittedManager) OnDealSectorPreCommitted(ctx context.Context,
 	return nil
 }
 
-func (mgr *SectorCommittedManager) OnDealSectorCommitted(ctx context.Context, provider address.Address, sectorNumber abi.SectorNumber, proposal market.DealProposal, publishCid cid.Cid, publishEpoch abi.ChainEpoch, callback storagemarket.DealSectorCommittedCallback) error {
+func (mgr *SectorCommittedManager) OnDealSectorCommitted(ctx context.Context, provider address.Address, sectorNumber abi.SectorNumber, proposal market.DealProposal, publishCid cid.Cid, callback storagemarket.DealSectorCommittedCallback) error {
 	// Ensure callback is only called once
 	var once sync.Once
 	cb := func(err error) {
@@ -214,11 +200,6 @@ func (mgr *SectorCommittedManager) OnDealSectorCommitted(ctx context.Context, pr
 
 	// First check if the deal is already active, and if so, bail out
 	checkFunc := func(ctx context.Context, ts *types.TipSet) (done bool, more bool, err error) {
-		if ts.Height() <= publishEpoch+abi.ChainEpoch(10) {
-			log.Errorf("octopus: check height=%v <= publish height=%v + 10", ts.Height(), publishEpoch)
-			return false, true, nil
-		}
-
 		_, isActive, err := mgr.checkIfDealAlreadyActive(ctx, ts, &proposal, publishCid)
 		if err != nil {
 			// Note: the error returned from here will end up being returned
@@ -268,15 +249,6 @@ func (mgr *SectorCommittedManager) OnDealSectorCommitted(ctx context.Context, pr
 		if rec.ExitCode != 0 {
 			return true, nil
 		}
-
-		if ts.Height() <= publishEpoch+abi.ChainEpoch(10) {
-			log.Errorf("octopus: called check height=%v <= publish height=%v + 10", ts.Height(), publishEpoch)
-			return true, nil
-		}
-
-		// When there is a reorg, the deal ID may change, so get the
-		// current deal ID from the publish message CID
-		log.Infof("octopus: OnDealSectorCommitted called publishCid %v at ts: %v", publishCid, ts.Height())
 
 		// Get the deal info
 		res, err := mgr.dealInfo.GetCurrentDealInfo(ctx, ts.Key().Bytes(), &proposal, publishCid)

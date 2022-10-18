@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/fatih/color"
 	logging "github.com/ipfs/go-log/v2"
@@ -43,7 +42,6 @@ func main() {
 		stopCmd,
 		configCmd,
 		backupCmd,
-		fullnodeCmd,
 		lcli.WithCategory("chain", actorCmd),
 		lcli.WithCategory("chain", infoCmd),
 		lcli.WithCategory("market", storageDealsCmd),
@@ -168,9 +166,6 @@ func main() {
 	}
 	app.Setup()
 	app.Metadata["repoType"] = repo.StorageMiner
-	os.Setenv("ENABLE_WINDOW_POST", "true")
-	os.Setenv("ENABLE_WINNING_POST", "true")
-
 	lcli.RunApp(app)
 }
 

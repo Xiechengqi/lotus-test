@@ -47,10 +47,6 @@ var serviceCmd = &cli.Command{
 			Name:  "api-sector-index",
 			Usage: "sector Index API info (lotus-miner auth api-info --perm=admin)",
 		},
-		&cli.StringFlag{
-			Name:  "api-sector-indexes",
-			Usage: "sector Index APIs info (lotus-miner auth api-info --perm=admin)",
-		},
 	},
 	ArgsUsage: "[backupFile]",
 	Action: func(cctx *cli.Context) error {
@@ -72,9 +68,6 @@ var serviceCmd = &cli.Command{
 			return xerrors.Errorf("--api-sealer is required without the sealer module enabled")
 		}
 		if !cctx.IsSet("api-sector-index") {
-			return xerrors.Errorf("--api-sector-index is required without the sector storage module enabled")
-		}
-		if !cctx.IsSet("api-sector-indexes") {
 			return xerrors.Errorf("--api-sector-index is required without the sector storage module enabled")
 		}
 

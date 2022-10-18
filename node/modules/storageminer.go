@@ -5,23 +5,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/12shipsDevelopment/go-rediscounter"
-	"github.com/filecoin-project/lotus/octopus"
-	"github.com/filecoin-project/lotus/storage/sectorblocks"
-	"github.com/go-redis/redis/v8"
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ipfs/go-cid"
+
+	"github.com/filecoin-project/go-paramfetch"
+	"github.com/filecoin-project/go-statestore"
+
+	"github.com/filecoin-project/go-address"
+	"github.com/filecoin-project/go-storedcounter"
+	"github.com/ipfs/go-datastore"
 
 	"go.uber.org/fx"
 	"go.uber.org/multierr"
 	"golang.org/x/xerrors"
 
-	"github.com/filecoin-project/go-address"
 	dtimpl "github.com/filecoin-project/go-data-transfer/impl"
 	dtnet "github.com/filecoin-project/go-data-transfer/network"
 	dtgstransport "github.com/filecoin-project/go-data-transfer/transport/graphsync"
@@ -36,14 +38,9 @@ import (
 	"github.com/filecoin-project/go-fil-markets/storagemarket/impl/storedask"
 	smnet "github.com/filecoin-project/go-fil-markets/storagemarket/network"
 	"github.com/filecoin-project/go-jsonrpc/auth"
-	"github.com/filecoin-project/go-paramfetch"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
-	"github.com/filecoin-project/go-statestore"
 	provider "github.com/filecoin-project/index-provider"
-	"github.com/filecoin-project/lotus/api"
-	"github.com/ipfs/go-cid"
-	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-datastore/namespace"
 	graphsync "github.com/ipfs/go-graphsync/impl"
 	gsnet "github.com/ipfs/go-graphsync/network"
@@ -56,6 +53,7 @@ import (
 	sealing "github.com/filecoin-project/lotus/extern/storage-sealing"
 	"github.com/filecoin-project/lotus/extern/storage-sealing/sealiface"
 
+	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/api/v0api"
 	"github.com/filecoin-project/lotus/api/v1api"
 	"github.com/filecoin-project/lotus/blockstore"
@@ -79,32 +77,9 @@ import (
 )
 
 var (
-	StorageCounterDSPrefix = "%v:storage:nextid"
+	StorageCounterDSPrefix = "/storage/nextid"
 	StagingAreaDirName     = "deal-staging"
 )
-
-func RedisClient() *redis.ClusterClient {
-	redisConn, ok := os.LookupEnv("REDIS_CONN")
-	if !ok {
-		panic("redis-conn is not provided.")
-	}
-	redisPassword, ok := os.LookupEnv("REDIS_PASSWORD")
-	if !ok {
-		redisPassword = ""
-	}
-	redisPoolSize := 5 * runtime.NumCPU()
-	redisPoolSizeStr, ok := os.LookupEnv("REDIS_POOLSIZE")
-	if ok {
-		redisPoolSize, _ = strconv.Atoi(redisPoolSizeStr)
-	}
-
-	log.Infof("octopus: init redis client: %v ******", redisConn)
-	return redis.NewClusterClient(&redis.ClusterOptions{
-		Addrs:    strings.Split(redisConn, ","),
-		Password: redisPassword,
-		PoolSize: redisPoolSize,
-	})
-}
 
 func minerAddrFromDS(ds dtypes.MetadataDS) (address.Address, error) {
 	maddrb, err := ds.Get(context.TODO(), datastore.NewKey("miner-address"))
@@ -166,28 +141,17 @@ func SealProofType(maddr dtypes.MinerAddress, fnapi v1api.FullNode) (abi.Registe
 }
 
 type sidsc struct {
-	rc *rediscounter.ClusterRedisCounter
-	//rc *rediscounter.RedisCounter
+	sc *storedcounter.StoredCounter
 }
 
 func (s *sidsc) Next() (abi.SectorNumber, error) {
-	i, err := s.rc.Next()
+	i, err := s.sc.Next()
 	return abi.SectorNumber(i), err
 }
 
-func SectorIDCounter(ds dtypes.MetadataDS, redisClient *redis.ClusterClient) sealing.SectorIDCounter {
-	minerAddress, _ := MinerAddress(ds)
-	minerId, _ := MinerID(minerAddress)
-	// prefixed with miner id to distinguish different miner sector id counter, so that multiple miners
-	// can retrieve next sector id from single redis instance.
-
-	//redisConn, _ := os.LookupEnv("REDIS_CONN")
-	//redisPassword, _ := os.LookupEnv("REDIS_PASSWORD")
-
-	redisCounter := rediscounter.NewWithClient(redisClient, fmt.Sprintf(StorageCounterDSPrefix, minerId))
-	//redisCounter := rediscounter.NewWithCluster(strings.Split(redisConn, ","), redisPassword, fmt.Sprintf(StorageCounterDSPrefix, minerId))
-	//redisCounter := rediscounter.New(redisConn, redisPassword, fmt.Sprintf(StorageCounterDSPrefix, minerId))
-	return &sidsc{rc: redisCounter}
+func SectorIDCounter(ds dtypes.MetadataDS) sealing.SectorIDCounter {
+	sc := storedcounter.New(ds, datastore.NewKey(StorageCounterDSPrefix))
+	return &sidsc{sc}
 }
 
 func AddressSelector(addrConf *config.MinerAddressConfig) func() (*storage.AddressSelector, error) {
@@ -243,10 +207,9 @@ func AddressSelector(addrConf *config.MinerAddressConfig) func() (*storage.Addre
 type StorageMinerParams struct {
 	fx.In
 
-	Lifecycle  fx.Lifecycle
-	MetricsCtx helpers.MetricsCtx
-	//API                v1api.FullNode
-	API                *octopus.FullNodePool
+	Lifecycle          fx.Lifecycle
+	MetricsCtx         helpers.MetricsCtx
+	API                v1api.FullNode
 	MetadataDS         dtypes.MetadataDS
 	Sealer             sectorstorage.SectorManager
 	SectorIDCounter    sealing.SectorIDCounter
@@ -256,13 +219,6 @@ type StorageMinerParams struct {
 	Journal            journal.Journal
 	AddrSel            *storage.AddressSelector
 	Maddr              dtypes.MinerAddress
-	RedisClient        *redis.ClusterClient
-}
-
-func AllSectorBuilders(builder sectorblocks.SectorBuilder) sectorblocks.AllSectorBuilders {
-	builders := sectorblocks.AllSectorBuilders{}
-	builders.SectorBuilders = append(builders.SectorBuilders, builder)
-	return builders
 }
 
 func StorageMiner(fc config.MinerFeeConfig) func(params StorageMinerParams) (*storage.Miner, error) {
@@ -279,23 +235,19 @@ func StorageMiner(fc config.MinerFeeConfig) func(params StorageMinerParams) (*st
 			gsd    = params.GetSealingConfigFn
 			j      = params.Journal
 			as     = params.AddrSel
-			rc     = params.RedisClient
 			maddr  = address.Address(params.Maddr)
 		)
 
 		ctx := helpers.LifecycleCtx(mctx, lc)
 
-		sm, err := storage.NewMiner(api, maddr, ds, sealer, sc, verif, prover, gsd, fc, j, as, rc)
+		sm, err := storage.NewMiner(api, maddr, ds, sealer, sc, verif, prover, gsd, fc, j, as)
 		if err != nil {
 			return nil, err
 		}
 
 		lc.Append(fx.Hook{
 			OnStart: func(context.Context) error {
-				if _, ok := os.LookupEnv("DISABLE_SEALING"); !ok {
-					return sm.Run(ctx)
-				}
-				return nil
+				return sm.Run(ctx)
 			},
 			OnStop: sm.Stop,
 		})
@@ -326,11 +278,7 @@ func WindowPostScheduler(fc config.MinerFeeConfig, pc config.ProvingConfig) func
 
 		lc.Append(fx.Hook{
 			OnStart: func(context.Context) error {
-				if _, ok := os.LookupEnv("ENABLE_WINDOW_POST"); ok {
-					go fps.Run(ctx)
-				} else {
-					log.Warnf("windowPoSt is disabled.")
-				}
+				go fps.Run(ctx)
 				return nil
 			},
 		})
@@ -496,13 +444,13 @@ func StagingGraphsync(parallelTransfersForStorage uint64, parallelTransfersForSt
 	}
 }
 
-func SetupBlockProducer(lc fx.Lifecycle, ds dtypes.MetadataDS, apis *octopus.FullNodePool, epp gen.WinningPoStProver, sf *slashfilter.SlashFilter, j journal.Journal) (*lotusminer.Miner, error) {
+func SetupBlockProducer(lc fx.Lifecycle, ds dtypes.MetadataDS, api v1api.FullNode, epp gen.WinningPoStProver, sf *slashfilter.SlashFilter, j journal.Journal) (*lotusminer.Miner, error) {
 	minerAddr, err := minerAddrFromDS(ds)
 	if err != nil {
 		return nil, err
 	}
 
-	m := lotusminer.NewMiner(apis, epp, minerAddr, sf, j)
+	m := lotusminer.NewMiner(api, epp, minerAddr, sf, j)
 
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {

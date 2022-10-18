@@ -3,8 +3,6 @@ package storage
 import (
 	"context"
 	"errors"
-	"github.com/filecoin-project/lotus/octopus"
-	"github.com/go-redis/redis/v8"
 	"time"
 
 	"github.com/filecoin-project/go-bitfield"
@@ -52,16 +50,14 @@ var log = logging.Logger("storageminer")
 //
 // Miner#Run starts the sealing FSM.
 type Miner struct {
-	api         fullNodeFilteredAPI
-	apis        octopus.FullNodePool
-	feeCfg      config.MinerFeeConfig
-	sealer      sectorstorage.SectorManager
-	ds          datastore.Batching
-	sc          sealing.SectorIDCounter
-	verif       ffiwrapper.Verifier
-	prover      ffiwrapper.Prover
-	addrSel     *AddressSelector
-	redisClient *redis.ClusterClient
+	api     fullNodeFilteredAPI
+	feeCfg  config.MinerFeeConfig
+	sealer  sectorstorage.SectorManager
+	ds      datastore.Batching
+	sc      sealing.SectorIDCounter
+	verif   ffiwrapper.Verifier
+	prover  ffiwrapper.Prover
+	addrSel *AddressSelector
 
 	maddr address.Address
 
@@ -136,8 +132,7 @@ type fullNodeFilteredAPI interface {
 }
 
 // NewMiner creates a new Miner object.
-func NewMiner( //api fullNodeFilteredAPI,
-	api *octopus.FullNodePool,
+func NewMiner(api fullNodeFilteredAPI,
 	maddr address.Address,
 	ds datastore.Batching,
 	sealer sectorstorage.SectorManager,
@@ -147,7 +142,7 @@ func NewMiner( //api fullNodeFilteredAPI,
 	gsd dtypes.GetSealingConfigFunc,
 	feeCfg config.MinerFeeConfig,
 	journal journal.Journal,
-	as *AddressSelector, rc *redis.ClusterClient) (*Miner, error) {
+	as *AddressSelector) (*Miner, error) {
 	m := &Miner{
 		api:     api,
 		feeCfg:  feeCfg,
@@ -162,7 +157,6 @@ func NewMiner( //api fullNodeFilteredAPI,
 		getSealConfig:  gsd,
 		journal:        journal,
 		sealingEvtType: journal.RegisterEventType("storage", "sealing_states"),
-		redisClient:    rc,
 	}
 
 	return m, nil
@@ -204,7 +198,7 @@ func (m *Miner) Run(ctx context.Context) error {
 	}
 
 	// Instantiate the sealing FSM.
-	m.sealing = sealing.New(ctx, adaptedAPI, m.feeCfg, evtsAdapter, m.maddr, m.ds, m.sealer, m.sc, m.verif, m.prover, &pcp, cfg, m.handleSealingNotifications, as, m.redisClient)
+	m.sealing = sealing.New(ctx, adaptedAPI, m.feeCfg, evtsAdapter, m.maddr, m.ds, m.sealer, m.sc, m.verif, m.prover, &pcp, cfg, m.handleSealingNotifications, as)
 
 	// Run the sealing FSM.
 	go m.sealing.Run(ctx) //nolint:errcheck // logged intside the function

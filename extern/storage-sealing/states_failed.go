@@ -11,11 +11,11 @@ import (
 	"github.com/filecoin-project/go-state-types/builtin/v8/miner"
 	"github.com/filecoin-project/lotus/chain/actors/builtin/market"
 
-	"github.com/filecoin-project/go-commp-utils/zerocomm"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/exitcode"
-
 	"github.com/filecoin-project/go-statemachine"
+
+	"github.com/filecoin-project/go-commp-utils/zerocomm"
 )
 
 const minRetryTime = 1 * time.Minute
@@ -66,12 +66,7 @@ func (m *Sealing) handleSealPrecommit2Failed(ctx statemachine.Context, sector Se
 	}
 
 	if sector.PreCommit2Fails > 3 {
-		if sector.Recovering {
-			log.Infof("octopus: recovering: p2 failed more than 3 tiems. give up recovering.")
-			return ctx.Send(SectorRecoverFailed{})
-		} else {
-			return ctx.Send(SectorRetrySealPreCommit1{})
-		}
+		return ctx.Send(SectorRetrySealPreCommit1{})
 	}
 
 	return ctx.Send(SectorRetrySealPreCommit2{})
@@ -186,13 +181,6 @@ func (m *Sealing) handleComputeProofFailed(ctx statemachine.Context, sector Sect
 	}
 
 	return ctx.Send(SectorRetryComputeProof{})
-}
-
-func (m *Sealing) handleCommitSubmitFailed(ctx statemachine.Context, sector SectorInfo) error {
-	if err := failedCooldown(ctx, sector); err != nil {
-		return err
-	}
-	return ctx.Send(SectorRetrySubmitCommit{})
 }
 
 func (m *Sealing) handleSubmitReplicaUpdateFailed(ctx statemachine.Context, sector SectorInfo) error {

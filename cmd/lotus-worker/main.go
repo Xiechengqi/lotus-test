@@ -24,6 +24,7 @@ import (
 	"github.com/filecoin-project/go-jsonrpc/auth"
 	paramfetch "github.com/filecoin-project/go-paramfetch"
 	"github.com/filecoin-project/go-statestore"
+
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/build"
 	lcli "github.com/filecoin-project/lotus/cli"
@@ -139,27 +140,27 @@ var runCmd = &cli.Command{
 		&cli.BoolFlag{
 			Name:  "addpiece",
 			Usage: "enable addpiece",
-			Value: false,
+			Value: true,
 		},
 		&cli.BoolFlag{
 			Name:  "precommit1",
 			Usage: "enable precommit1 (32G sectors: 1 core, 128GiB Memory)",
-			Value: false,
+			Value: true,
 		},
 		&cli.BoolFlag{
 			Name:  "unseal",
 			Usage: "enable unsealing (32G sectors: 1 core, 128GiB Memory)",
-			Value: false,
+			Value: true,
 		},
 		&cli.BoolFlag{
 			Name:  "precommit2",
 			Usage: "enable precommit2 (32G sectors: all cores, 96GiB Memory)",
-			Value: false,
+			Value: true,
 		},
 		&cli.BoolFlag{
 			Name:  "commit",
 			Usage: "enable commit (32G sectors: all cores or GPUs, 128GiB Memory + 64GiB swap)",
-			Value: false,
+			Value: true,
 		},
 		&cli.BoolFlag{
 			Name:  "replica-update",
@@ -308,7 +309,7 @@ var runCmd = &cli.Command{
 
 		if workerType == "" {
 			workerType = sealtasks.WorkerSealing
-			//taskTypes = append(taskTypes, sealtasks.TTFetch, sealtasks.TTCommit1, sealtasks.TTProveReplicaUpdate1, sealtasks.TTFinalize, sealtasks.TTFinalizeReplicaUpdate)
+			taskTypes = append(taskTypes, sealtasks.TTFetch, sealtasks.TTCommit1, sealtasks.TTProveReplicaUpdate1, sealtasks.TTFinalize, sealtasks.TTFinalizeReplicaUpdate)
 		}
 
 		if (workerType == sealtasks.WorkerSealing || cctx.IsSet("addpiece")) && cctx.Bool("addpiece") {

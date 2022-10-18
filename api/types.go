@@ -53,11 +53,6 @@ type PubsubScore struct {
 	Score *pubsub.PeerScoreSnapshot
 }
 
-type ExchangeClientCost struct {
-	ID   peer.ID
-	Cost float64
-}
-
 type MessageSendSpec struct {
 	MaxFee abi.TokenAmount
 }

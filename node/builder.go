@@ -3,8 +3,6 @@ package node
 import (
 	"context"
 	"errors"
-	"github.com/multiformats/go-multiaddr"
-	"strings"
 	"time"
 
 	metricsi "github.com/ipfs/go-metrics-interface"
@@ -25,6 +23,7 @@ import (
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	record "github.com/libp2p/go-libp2p-record"
 	"github.com/libp2p/go-libp2p/p2p/net/conngater"
+	"github.com/multiformats/go-multiaddr"
 	"go.uber.org/fx"
 	"golang.org/x/xerrors"
 
@@ -124,7 +123,6 @@ const (
 	SetupFallbackBlockstoresKey
 
 	SetApiEndpointKey
-	LogVersionKey
 
 	_nInvokes // keep this last
 )
@@ -264,9 +262,6 @@ func ConfigCommon(cfg *config.Common, enableLibp2pNode bool) Option {
 		Override(new(dtypes.APIEndpoint), func() (dtypes.APIEndpoint, error) {
 			return multiaddr.NewMultiaddr(cfg.API.ListenAddress)
 		}),
-		Override(LogVersionKey, func() {
-			log.Infof("octopus: ---- version: %v ----", build.CurrentCommit)
-		}),
 		Override(SetApiEndpointKey, func(lr repo.LockedRepo, e dtypes.APIEndpoint) error {
 			return lr.SetAPIEndpoint(e)
 		}),
@@ -274,13 +269,7 @@ func ConfigCommon(cfg *config.Common, enableLibp2pNode bool) Option {
 			ip := cfg.API.RemoteListenAddress
 
 			var urls stores.URLs
-			ipParts := strings.Split(ip, ":")
-
-			if len(ipParts) == 2 {
-				urls = append(urls, "http://127.0.0.1:"+ipParts[1]+"/remote") // TODO: This makes no assumptions, and probably could...
-			} else {
-				urls = append(urls, "http://127.0.0.1/remote") // TODO: This makes no assumptions, and probably could...
-			}
+			urls = append(urls, "http://"+ip+"/remote") // TODO: This makes no assumptions, and probably could...
 			return urls, nil
 		}),
 		ApplyIf(func(s *Settings) bool { return s.Base }), // apply only if Base has already been applied

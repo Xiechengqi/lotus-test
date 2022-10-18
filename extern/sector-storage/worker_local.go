@@ -151,22 +151,7 @@ func (l *localWorkerPathProvider) AcquireSector(ctx context.Context, sector stor
 		return storiface.SectorPaths{}, nil, err
 	}
 
-	isCCSector := true
-	sp := ctx.Value("isCC")
-	log.Debugf("octopus: p1: context isCC=%v", sp)
-	if p, ok := sp.(bool); ok {
-		if !p {
-			isCCSector = false
-		}
-	}
-	var overhead map[storiface.SectorFileType]int
-	if isCCSector {
-		overhead = storiface.FSOverheadCCSeal
-	} else {
-		overhead = storiface.FSOverheadSeal
-	}
-
-	releaseStorage, err := l.w.localStore.Reserve(ctx, sector, allocate, storageIDs, overhead)
+	releaseStorage, err := l.w.localStore.Reserve(ctx, sector, allocate, storageIDs, storiface.FSOverheadSeal)
 	if err != nil {
 		return storiface.SectorPaths{}, nil, xerrors.Errorf("reserving storage space: %w", err)
 	}
@@ -825,7 +810,6 @@ func (l *LocalWorker) Info(context.Context) (storiface.WorkerInfo, error) {
 			GPUs:        gpus,
 			Resources:   resEnv,
 		},
-		TaskResources: storiface.NewTaskLimitConfig(),
 	}, nil
 }
 

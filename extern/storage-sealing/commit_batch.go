@@ -3,10 +3,7 @@ package sealing
 import (
 	"bytes"
 	"context"
-	"fmt"
-	"os"
 	"sort"
-	"strconv"
 	"sync"
 	"time"
 
@@ -22,8 +19,6 @@ import (
 	"github.com/filecoin-project/go-state-types/builtin"
 	"github.com/filecoin-project/go-state-types/builtin/v8/miner"
 	"github.com/filecoin-project/go-state-types/network"
-
-	"github.com/bsm/redislock"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/lotus/chain/actors"
@@ -73,11 +68,9 @@ type CommitBatcher struct {
 	notify, stop, stopped chan struct{}
 	force                 chan chan []sealiface.CommitBatchRes
 	lk                    sync.Mutex
-
-	redisLockClient *redislock.Client
 }
 
-func NewCommitBatcher(mctx context.Context, maddr address.Address, api CommitBatcherApi, addrSel AddrSel, feeCfg config.MinerFeeConfig, getConfig GetSealingConfigFunc, prov ffiwrapper.Prover, redisLockClient *redislock.Client) *CommitBatcher {
+func NewCommitBatcher(mctx context.Context, maddr address.Address, api CommitBatcherApi, addrSel AddrSel, feeCfg config.MinerFeeConfig, getConfig GetSealingConfigFunc, prov ffiwrapper.Prover) *CommitBatcher {
 	b := &CommitBatcher{
 		api:       api,
 		maddr:     maddr,
@@ -95,8 +88,6 @@ func NewCommitBatcher(mctx context.Context, maddr address.Address, api CommitBat
 		force:   make(chan chan []sealiface.CommitBatchRes),
 		stop:    make(chan struct{}),
 		stopped: make(chan struct{}),
-
-		redisLockClient: redisLockClient,
 	}
 
 	go b.run()
@@ -122,34 +113,21 @@ func (b *CommitBatcher) run() {
 		lastMsg = nil
 
 		// indicates whether we should only start a batch if we have reached or exceeded cfg.MaxCommitBatch
-		//var sendAboveMax bool
-		var timeout bool
-		var force bool
-
-		nowMilliSecs := time.Now().UnixNano() / 1000000
-		nextBlockTime := ((nowMilliSecs+(15*1000))/(30*1000)+1)*30*1000 + 15*1000
-		waitMilliSecs := nextBlockTime - nowMilliSecs + int64(819-len(b.todo))
-		log.Debugf("octopus: commit_batch: next block time=%d, wait secs=%d", nextBlockTime, waitMilliSecs)
-
+		var sendAboveMax bool
 		select {
-		case <-time.After(time.Duration(waitMilliSecs) * time.Millisecond):
-			//log.Debugf("octopus: commit_batch: handle batch")
-			// do nothing
 		case <-b.stop:
 			close(b.stopped)
 			return
-		//case <-b.notify:
-		//	sendAboveMax = true
+		case <-b.notify:
+			sendAboveMax = true
 		case <-timer.C:
-			timeout = true
 			// do nothing
 		case fr := <-b.force: // user triggered
 			forceRes = fr
-			force = true
 		}
 
 		var err error
-		lastMsg, err = b.maybeStartBatch(timeout, nextBlockTime, force)
+		lastMsg, err = b.maybeStartBatch(sendAboveMax)
 		if err != nil {
 			log.Warnw("CommitBatcher processBatch error", "error", err)
 		}
@@ -161,11 +139,6 @@ func (b *CommitBatcher) run() {
 			}
 		}
 
-		// fix CommitBatchWait & CommitBatchSlack unchanged.
-		ccfg, err := b.getConfig()
-		if err == nil {
-			cfg = ccfg
-		}
 		timer.Reset(b.batchWait(cfg.CommitBatchWait, cfg.CommitBatchSlack))
 	}
 }
@@ -211,7 +184,7 @@ func (b *CommitBatcher) batchWait(maxWait, slack time.Duration) time.Duration {
 	return wait
 }
 
-func (b *CommitBatcher) maybeStartBatch(timeout bool, nextBlockTime int64, force bool) ([]sealiface.CommitBatchRes, error) {
+func (b *CommitBatcher) maybeStartBatch(notif bool) ([]sealiface.CommitBatchRes, error) {
 	b.lk.Lock()
 	defer b.lk.Unlock()
 
@@ -225,9 +198,9 @@ func (b *CommitBatcher) maybeStartBatch(timeout bool, nextBlockTime int64, force
 		return nil, xerrors.Errorf("getting config: %w", err)
 	}
 
-	//if notif && total < cfg.MaxCommitBatch {
-	//	return nil, nil
-	//}
+	if notif && total < cfg.MaxCommitBatch {
+		return nil, nil
+	}
 
 	var res []sealiface.CommitBatchRes
 
@@ -253,71 +226,15 @@ func (b *CommitBatcher) maybeStartBatch(timeout bool, nextBlockTime int64, force
 			return nil, xerrors.Errorf("couldn't get base fee: %w", err)
 		}
 
-		log.Debugf("octopus: commit_batch: base fee: %v, AggregateAboveBaseFee: %v", bf, cfg.AggregateAboveBaseFee)
 		if bf.LessThan(cfg.AggregateAboveBaseFee) {
 			individual = true
 		}
 	}
 
-	if force {
-		if individual {
-			log.Debugf("octopus: commit_batch: force processIndividually")
-			res, err = b.processIndividually(cfg)
-		} else {
-			res, err = b.processBatch(cfg)
-		}
+	if individual {
+		res, err = b.processIndividually(cfg)
 	} else {
-		if individual {
-			if timeout {
-				log.Infof("octopus: commit_batch: timed out, process individually.")
-				res, err = b.processIndividually(cfg)
-			} else {
-				minTodoStr := os.Getenv("COMMIT_BATCH_LOCK_MIN")
-				if minTodoStr != "" {
-					minTodo, err := strconv.Atoi(minTodoStr)
-					if err != nil {
-						// 读不到该变量时，默认没有限制。
-						log.Errorf("octopus: commit_batch: parse COMMIT_BATCH_LOCK_MIN error: %v, try to acquire lock.", err)
-					} else {
-						log.Debugf("octopus: commit_batch: b.todo:")
-						for k, _ := range b.todo {
-							log.Debugf("%v", k)
-						}
-						if total < minTodo {
-							// 小于该值时，do nothing.
-							log.Debugf("octopus: commit_batch: todo(%d) < min(%d)", total, minTodo)
-							return nil, nil
-						} else {
-							// 符合要求，尝试获取锁。
-							log.Debugf("octopus: commit_batch: todo(%d) >= min(%d). try to acquire lock.", total, minTodo)
-						}
-					}
-				} else {
-					log.Debugf("octopus: commit_batch: COMMIT_BATCH_LOCK_MIN is not set, try to acquire lock.")
-				}
-
-				ctx := context.Background()
-				mid, addrErr := address.IDFromAddress(b.maddr)
-				if addrErr != nil {
-					log.Debugf("octopus: obtain lock err: %v", addrErr)
-					return nil, nil
-				}
-				key := fmt.Sprintf("%d-commitlock-%d", mid, nextBlockTime)
-				log.Debugf("octopus: octopus: commit_batch: redis lock key: %s", key)
-				_, lockErr := b.redisLockClient.Obtain(ctx, key, 30*time.Second, nil)
-				if lockErr == nil {
-					log.Debugf("octopus: obtained lock %s, process individually.", key)
-					res, err = b.processIndividually(cfg)
-				} else {
-					log.Debugf("octopus: obtain lock %s err: %v", key, err)
-					return nil, nil
-				}
-			}
-		} else if timeout || total >= cfg.MaxCommitBatch {
-			res, err = b.processBatch(cfg)
-		} else {
-			return nil, nil
-		}
+		res, err = b.processBatch(cfg)
 	}
 
 	if err != nil {
@@ -502,15 +419,6 @@ func (b *CommitBatcher) processIndividually(cfg sealiface.Config) ([]sealiface.C
 
 	var res []sealiface.CommitBatchRes
 
-	individualBatch := len(b.todo)
-	individualBatchStr := os.Getenv("COMMIT_BATCH_MAX_INDIVIDUAL")
-	if individualBatchStr != "" {
-		individualBatch, err = strconv.Atoi(individualBatchStr)
-		if err != nil {
-			log.Errorf("octopus: parse cfg.MaxCommitBatch error: %v", err)
-		}
-	}
-
 	for sn, info := range b.todo {
 		r := sealiface.CommitBatchRes{
 			Sectors:       []abi.SectorNumber{sn},
@@ -519,18 +427,13 @@ func (b *CommitBatcher) processIndividually(cfg sealiface.Config) ([]sealiface.C
 
 		mcid, err := b.processSingle(cfg, mi, &avail, sn, info, tok)
 		if err != nil {
-			log.Errorf("octopus: commit_batch: process single error: %+v", err) // todo: return to user
+			log.Errorf("process single error: %+v", err) // todo: return to user
 			r.FailedSectors[sn] = err.Error()
 		} else {
 			r.Msg = &mcid
 		}
 
 		res = append(res, r)
-
-		log.Debugf("octopus: commit_batch: process single sector %v %d", sn, len(res))
-		if len(res) >= individualBatch {
-			break
-		}
 	}
 
 	return res, nil

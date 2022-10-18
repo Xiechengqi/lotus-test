@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"github.com/filecoin-project/lotus/api"
 	"math/rand"
 	"time"
 
@@ -106,14 +105,13 @@ func (c *client) doRequest(
 	globalTime := build.Clock.Now()
 	// Global time used to track what is the expected time we will need to get
 	// a response if a client fails us.
-	for i, peer := range peers {
+	for _, peer := range peers {
 		select {
 		case <-ctx.Done():
 			return nil, xerrors.Errorf("context cancelled: %w", ctx.Err())
 		default:
 		}
 
-		tsStart := build.Clock.Now()
 		// Send request, read response.
 		res, err := c.sendRequestToPeer(ctx, peer, req)
 		if err != nil {
@@ -121,7 +119,6 @@ func (c *client) doRequest(
 				log.Warnf("could not send request to peer %s: %s",
 					peer.String(), err)
 			}
-			log.Errorf("octopus: try %d peer %v err costs: %v", i, peer.String(), time.Since(tsStart))
 			continue
 		}
 
@@ -132,7 +129,6 @@ func (c *client) doRequest(
 				peer.String(), err)
 			continue
 		}
-		log.Infof("octopus: try %d peer %v costs: %v", i, peer.String(), time.Since(tsStart))
 
 		c.peerTracker.logGlobalSuccess(build.Clock.Since(globalTime))
 		c.host.ConnManager().TagPeer(peer, "bsync", SuccessPeerTagValue)
@@ -480,18 +476,6 @@ func (c *client) getShuffledPeers() []peer.ID {
 	peers := c.peerTracker.prefSortedPeers()
 	shufflePrefix(peers)
 	return peers
-}
-
-func (c *client) GetPeersCost() []api.ExchangeClientCost {
-	peers := c.peerTracker.prefSortedPeers()
-	var costs []api.ExchangeClientCost
-	for _, peerId := range peers {
-		costs = append(costs, api.ExchangeClientCost{
-			ID:   peerId,
-			Cost: c.peerTracker.peerCost(peerId),
-		})
-	}
-	return costs
 }
 
 func shufflePrefix(peers []peer.ID) {

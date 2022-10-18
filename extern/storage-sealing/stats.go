@@ -36,7 +36,7 @@ func (ss *SectorStats) updateSector(ctx context.Context, cfg sealiface.Config, i
 	defer ss.lk.Unlock()
 
 	preSealing := ss.curSealingLocked()
-	//preStaging := ss.curStagingLocked()
+	preStaging := ss.curStagingLocked()
 
 	// update totals
 	oldst, found := ss.bySector[id]
@@ -69,7 +69,7 @@ func (ss *SectorStats) updateSector(ctx context.Context, cfg sealiface.Config, i
 	}
 
 	if cfg.MaxWaitDealsSectors > 0 && // max waiting deal sector limit set
-		//preStaging >= cfg.MaxWaitDealsSectors && // we were over limit
+		preStaging >= cfg.MaxWaitDealsSectors && // we were over limit
 		staging < cfg.MaxWaitDealsSectors { // and we're below the limit now
 		updateInput = true
 	}

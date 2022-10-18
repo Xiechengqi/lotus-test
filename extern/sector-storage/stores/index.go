@@ -44,25 +44,19 @@ type SectorIndex interface { // part of storage-miner api
 	StorageGetLocks(ctx context.Context) (storiface.SectorLocks, error)
 
 	StorageList(ctx context.Context) (map[storiface.ID][]storiface.Decl, error)
-	StorageListSelected(ctx context.Context, selected map[storiface.ID]string) (map[storiface.ID][]storiface.Decl, error)
-}
-
-type Decl struct {
-	abi.SectorID
-	storiface.SectorFileType
 }
 
 type declMeta struct {
-	Storage storiface.ID
-	Primary bool
+	storage storiface.ID
+	primary bool
 }
 
 type storageEntry struct {
-	Info *storiface.StorageInfo
-	Fsi  fsutil.FsStat
+	info *storiface.StorageInfo
+	fsi  fsutil.FsStat
 
-	LastHeartbeat time.Time
-	HeartbeatErr  error
+	lastHeartbeat time.Time
+	heartbeatErr  error
 }
 
 type Index struct {
@@ -94,7 +88,7 @@ func (i *Index) StorageList(ctx context.Context) (map[storiface.ID][]storiface.D
 	}
 	for decl, ids := range i.sectors {
 		for _, id := range ids {
-			byID[id.Storage][decl.SectorID] |= decl.SectorFileType
+			byID[id.storage][decl.SectorID] |= decl.SectorFileType
 		}
 	}
 
@@ -127,29 +121,29 @@ func (i *Index) StorageAttach(ctx context.Context, si storiface.StorageInfo, st 
 
 	uloop:
 		for _, u := range si.URLs {
-			for _, l := range i.stores[si.ID].Info.URLs {
+			for _, l := range i.stores[si.ID].info.URLs {
 				if u == l {
 					continue uloop
 				}
 			}
 
-			i.stores[si.ID].Info.URLs = append(i.stores[si.ID].Info.URLs, u)
+			i.stores[si.ID].info.URLs = append(i.stores[si.ID].info.URLs, u)
 		}
 
-		i.stores[si.ID].Info.Weight = si.Weight
-		i.stores[si.ID].Info.MaxStorage = si.MaxStorage
-		i.stores[si.ID].Info.CanSeal = si.CanSeal
-		i.stores[si.ID].Info.CanStore = si.CanStore
-		i.stores[si.ID].Info.Groups = si.Groups
-		i.stores[si.ID].Info.AllowTo = si.AllowTo
+		i.stores[si.ID].info.Weight = si.Weight
+		i.stores[si.ID].info.MaxStorage = si.MaxStorage
+		i.stores[si.ID].info.CanSeal = si.CanSeal
+		i.stores[si.ID].info.CanStore = si.CanStore
+		i.stores[si.ID].info.Groups = si.Groups
+		i.stores[si.ID].info.AllowTo = si.AllowTo
 
 		return nil
 	}
 	i.stores[si.ID] = &storageEntry{
-		Info: &si,
-		Fsi:  st,
+		info: &si,
+		fsi:  st,
 
-		LastHeartbeat: time.Now(),
+		lastHeartbeat: time.Now(),
 	}
 	return nil
 }
@@ -163,13 +157,13 @@ func (i *Index) StorageReportHealth(ctx context.Context, id storiface.ID, report
 		return xerrors.Errorf("health report for unknown storage: %s", id)
 	}
 
-	ent.Fsi = report.Stat
+	ent.fsi = report.Stat
 	if report.Err != "" {
-		ent.HeartbeatErr = errors.New(report.Err)
+		ent.heartbeatErr = errors.New(report.Err)
 	} else {
-		ent.HeartbeatErr = nil
+		ent.heartbeatErr = nil
 	}
-	ent.LastHeartbeat = time.Now()
+	ent.lastHeartbeat = time.Now()
 
 	if report.Stat.Capacity > 0 {
 		ctx, _ = tag.New(ctx, tag.Upsert(metrics.StorageID, string(id)))
@@ -206,9 +200,9 @@ loop:
 		d := storiface.Decl{SectorID: s, SectorFileType: fileType}
 
 		for _, sid := range i.sectors[d] {
-			if sid.Storage == storageID {
-				if !sid.Primary && primary {
-					sid.Primary = true
+			if sid.storage == storageID {
+				if !sid.primary && primary {
+					sid.primary = true
 				} else {
 					log.Warnf("sector %v redeclared in %s", s, storageID)
 				}
@@ -217,8 +211,8 @@ loop:
 		}
 
 		i.sectors[d] = append(i.sectors[d], &declMeta{
-			Storage: storageID,
-			Primary: primary,
+			storage: storageID,
+			primary: primary,
 		})
 	}
 
@@ -242,7 +236,7 @@ func (i *Index) StorageDropSector(ctx context.Context, storageID storiface.ID, s
 
 		rewritten := make([]*declMeta, 0, len(i.sectors[d])-1)
 		for _, sid := range i.sectors[d] {
-			if sid.Storage == storageID {
+			if sid.storage == storageID {
 				continue
 			}
 
@@ -274,8 +268,8 @@ func (i *Index) StorageFindSector(ctx context.Context, s abi.SectorID, ft storif
 		}
 
 		for _, id := range i.sectors[storiface.Decl{SectorID: s, SectorFileType: pathType}] {
-			storageIDs[id.Storage]++
-			isprimary[id.Storage] = isprimary[id.Storage] || id.Primary
+			storageIDs[id.storage]++
+			isprimary[id.storage] = isprimary[id.storage] || id.primary
 		}
 	}
 
@@ -288,8 +282,8 @@ func (i *Index) StorageFindSector(ctx context.Context, s abi.SectorID, ft storif
 			continue
 		}
 
-		urls, burls := make([]string, len(st.Info.URLs)), make([]string, len(st.Info.URLs))
-		for k, u := range st.Info.URLs {
+		urls, burls := make([]string, len(st.info.URLs)), make([]string, len(st.info.URLs))
+		for k, u := range st.info.URLs {
 			rl, err := url.Parse(u)
 			if err != nil {
 				return nil, xerrors.Errorf("failed to parse url: %w", err)
@@ -300,8 +294,8 @@ func (i *Index) StorageFindSector(ctx context.Context, s abi.SectorID, ft storif
 			burls[k] = u
 		}
 
-		if allowTo != nil && len(st.Info.AllowTo) > 0 {
-			for _, group := range st.Info.AllowTo {
+		if allowTo != nil && len(st.info.AllowTo) > 0 {
+			for _, group := range st.info.AllowTo {
 				allowTo[group] = struct{}{}
 			}
 		} else {
@@ -312,38 +306,38 @@ func (i *Index) StorageFindSector(ctx context.Context, s abi.SectorID, ft storif
 			ID:       id,
 			URLs:     urls,
 			BaseURLs: burls,
-			Weight:   st.Info.Weight * n, // storage with more sector types is better
+			Weight:   st.info.Weight * n, // storage with more sector types is better
 
-			CanSeal:  st.Info.CanSeal,
-			CanStore: st.Info.CanStore,
+			CanSeal:  st.info.CanSeal,
+			CanStore: st.info.CanStore,
 
 			Primary: isprimary[id],
 		})
 	}
 
 	if allowFetch {
-		spaceReq, err := ft.SealSpaceUse(ctx, ssize)
+		spaceReq, err := ft.SealSpaceUse(ssize)
 		if err != nil {
 			return nil, xerrors.Errorf("estimating required space: %w", err)
 		}
 
 		for id, st := range i.stores {
-			if !st.Info.CanSeal {
+			if !st.info.CanSeal {
 				continue
 			}
 
-			if spaceReq > uint64(st.Fsi.Available) {
-				log.Debugf("not selecting on %s, out of space (available: %d, need: %d)", st.Info.ID, st.Fsi.Available, spaceReq)
+			if spaceReq > uint64(st.fsi.Available) {
+				log.Debugf("not selecting on %s, out of space (available: %d, need: %d)", st.info.ID, st.fsi.Available, spaceReq)
 				continue
 			}
 
-			if time.Since(st.LastHeartbeat) > SkippedHeartbeatThresh {
-				log.Debugf("not selecting on %s, didn't receive heartbeats for %s", st.Info.ID, time.Since(st.LastHeartbeat))
+			if time.Since(st.lastHeartbeat) > SkippedHeartbeatThresh {
+				log.Debugf("not selecting on %s, didn't receive heartbeats for %s", st.info.ID, time.Since(st.lastHeartbeat))
 				continue
 			}
 
-			if st.HeartbeatErr != nil {
-				log.Debugf("not selecting on %s, heartbeat error: %s", st.Info.ID, st.HeartbeatErr)
+			if st.heartbeatErr != nil {
+				log.Debugf("not selecting on %s, heartbeat error: %s", st.info.ID, st.heartbeatErr)
 				continue
 			}
 
@@ -353,22 +347,22 @@ func (i *Index) StorageFindSector(ctx context.Context, s abi.SectorID, ft storif
 
 			if allowTo != nil {
 				allow := false
-				for _, group := range st.Info.Groups {
+				for _, group := range st.info.Groups {
 					if _, found := allowTo[group]; found {
-						log.Debugf("path %s in allowed group %s", st.Info.ID, group)
+						log.Debugf("path %s in allowed group %s", st.info.ID, group)
 						allow = true
 						break
 					}
 				}
 
 				if !allow {
-					log.Debugf("not selecting on %s, not in allowed group, allow %+v; path has %+v", st.Info.ID, allowTo, st.Info.Groups)
+					log.Debugf("not selecting on %s, not in allowed group, allow %+v; path has %+v", st.info.ID, allowTo, st.info.Groups)
 					continue
 				}
 			}
 
-			urls, burls := make([]string, len(st.Info.URLs)), make([]string, len(st.Info.URLs))
-			for k, u := range st.Info.URLs {
+			urls, burls := make([]string, len(st.info.URLs)), make([]string, len(st.info.URLs))
+			for k, u := range st.info.URLs {
 				rl, err := url.Parse(u)
 				if err != nil {
 					return nil, xerrors.Errorf("failed to parse url: %w", err)
@@ -383,10 +377,10 @@ func (i *Index) StorageFindSector(ctx context.Context, s abi.SectorID, ft storif
 				ID:       id,
 				URLs:     urls,
 				BaseURLs: burls,
-				Weight:   st.Info.Weight * 0, // TODO: something better than just '0'
+				Weight:   st.info.Weight * 0, // TODO: something better than just '0'
 
-				CanSeal:  st.Info.CanSeal,
-				CanStore: st.Info.CanStore,
+				CanSeal:  st.info.CanSeal,
+				CanStore: st.info.CanStore,
 
 				Primary: false,
 			})
@@ -405,7 +399,7 @@ func (i *Index) StorageInfo(ctx context.Context, id storiface.ID) (storiface.Sto
 		return storiface.StorageInfo{}, xerrors.Errorf("sector store not found")
 	}
 
-	return *si.Info, nil
+	return *si.info, nil
 }
 
 func (i *Index) StorageBestAlloc(ctx context.Context, allocate storiface.SectorFileType, ssize abi.SectorSize, pathType storiface.PathType) ([]storiface.StorageInfo, error) {
@@ -418,7 +412,7 @@ func (i *Index) StorageBestAlloc(ctx context.Context, allocate storiface.SectorF
 	var spaceReq uint64
 	switch pathType {
 	case storiface.PathSealing:
-		spaceReq, err = allocate.SealSpaceUse(ctx, ssize)
+		spaceReq, err = allocate.SealSpaceUse(ssize)
 	case storiface.PathStorage:
 		spaceReq, err = allocate.StoreSpaceUse(ssize)
 	default:
@@ -429,25 +423,25 @@ func (i *Index) StorageBestAlloc(ctx context.Context, allocate storiface.SectorF
 	}
 
 	for _, p := range i.stores {
-		if (pathType == storiface.PathSealing) && !p.Info.CanSeal {
+		if (pathType == storiface.PathSealing) && !p.info.CanSeal {
 			continue
 		}
-		if (pathType == storiface.PathStorage) && !p.Info.CanStore {
-			continue
-		}
-
-		if spaceReq > uint64(p.Fsi.Available) {
-			log.Debugf("not allocating on %s, out of space (available: %d, need: %d)", p.Info.ID, p.Fsi.Available, spaceReq)
+		if (pathType == storiface.PathStorage) && !p.info.CanStore {
 			continue
 		}
 
-		if time.Since(p.LastHeartbeat) > SkippedHeartbeatThresh {
-			log.Debugf("not allocating on %s, didn't receive heartbeats for %s", p.Info.ID, time.Since(p.LastHeartbeat))
+		if spaceReq > uint64(p.fsi.Available) {
+			log.Debugf("not allocating on %s, out of space (available: %d, need: %d)", p.info.ID, p.fsi.Available, spaceReq)
 			continue
 		}
 
-		if p.HeartbeatErr != nil {
-			log.Debugf("not allocating on %s, heartbeat error: %s", p.Info.ID, p.HeartbeatErr)
+		if time.Since(p.lastHeartbeat) > SkippedHeartbeatThresh {
+			log.Debugf("not allocating on %s, didn't receive heartbeats for %s", p.info.ID, time.Since(p.lastHeartbeat))
+			continue
+		}
+
+		if p.heartbeatErr != nil {
+			log.Debugf("not allocating on %s, heartbeat error: %s", p.info.ID, p.heartbeatErr)
 			continue
 		}
 
@@ -459,15 +453,15 @@ func (i *Index) StorageBestAlloc(ctx context.Context, allocate storiface.SectorF
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {
-		iw := big.Mul(big.NewInt(candidates[i].Fsi.Available), big.NewInt(int64(candidates[i].Info.Weight)))
-		jw := big.Mul(big.NewInt(candidates[j].Fsi.Available), big.NewInt(int64(candidates[j].Info.Weight)))
+		iw := big.Mul(big.NewInt(candidates[i].fsi.Available), big.NewInt(int64(candidates[i].info.Weight)))
+		jw := big.Mul(big.NewInt(candidates[j].fsi.Available), big.NewInt(int64(candidates[j].info.Weight)))
 
 		return iw.GreaterThan(jw)
 	})
 
 	out := make([]storiface.StorageInfo, len(candidates))
 	for i, candidate := range candidates {
-		out[i] = *candidate.Info
+		out[i] = *candidate.info
 	}
 
 	return out, nil
@@ -486,11 +480,10 @@ func (i *Index) FindSector(id abi.SectorID, typ storiface.SectorFileType) ([]sto
 	}
 	out := make([]storiface.ID, 0, len(f))
 	for _, meta := range f {
-		out = append(out, meta.Storage)
+		out = append(out, meta.storage)
 	}
 
 	return out, nil
 }
 
-//var _ SectorIndex = &Index{}
-var _ SectorIndex = &RedisIndex{}
+var _ SectorIndex = &Index{}

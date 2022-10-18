@@ -63,9 +63,8 @@ func (l *LotusMount) Info() mount.Info {
 	return mount.Info{
 		Kind:             mount.KindRemote,
 		AccessSequential: true,
-		// octopus: try to save car as transient
-		AccessSeek:   false,
-		AccessRandom: true,
+		AccessSeek:       true,
+		AccessRandom:     true,
 	}
 }
 

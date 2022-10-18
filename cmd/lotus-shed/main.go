@@ -62,7 +62,6 @@ func main() {
 		minerTypesCmd,
 		minerPeeridCmd,
 		minerMultisigsCmd,
-		recoveryCmd,
 		splitstoreCmd,
 		fr32Cmd,
 		chainCmd,

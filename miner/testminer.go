@@ -2,7 +2,7 @@ package miner
 
 import (
 	"context"
-	"github.com/filecoin-project/lotus/octopus"
+
 	lru "github.com/hashicorp/golang-lru"
 	ds "github.com/ipfs/go-datastore"
 
@@ -27,9 +27,8 @@ func NewTestMiner(nextCh <-chan MineReq, addr address.Address) func(v1api.FullNo
 			panic(err)
 		}
 
-		p := octopus.NewFullNodePool(nil, nil, "default", api, func() {})
 		m := &Miner{
-			apis:              p,
+			api:               api,
 			waitFunc:          chanWaiter(nextCh),
 			epp:               epp,
 			minedBlockHeights: arc,

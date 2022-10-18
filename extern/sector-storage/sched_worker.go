@@ -2,12 +2,11 @@ package sectorstorage
 
 import (
 	"context"
-	"github.com/filecoin-project/lotus/build"
-	"sort"
 	"time"
 
 	"golang.org/x/xerrors"
 
+	"github.com/filecoin-project/lotus/extern/sector-storage/sealtasks"
 	"github.com/filecoin-project/lotus/extern/sector-storage/stores"
 	"github.com/filecoin-project/lotus/extern/sector-storage/storiface"
 )
@@ -202,7 +201,6 @@ func (sw *schedWorker) disable(ctx context.Context) error {
 func (sw *schedWorker) checkSession(ctx context.Context) bool {
 	for {
 		sctx, scancel := context.WithTimeout(ctx, stores.HeartbeatInterval/2)
-		log.Debugf("octopus: start checking worker %s session", sw.worker.info.Hostname)
 		curSes, err := sw.worker.workerRpc.Session(sctx)
 		scancel()
 		if err != nil {
@@ -287,7 +285,6 @@ func (sw *schedWorker) workerCompactWindows() {
 
 	// move tasks from older windows to newer windows if older windows
 	// still can fit them
-	log.Debugf("octopus: sched: before compact, active windows len=%d", len(worker.activeWindows))
 	if len(worker.activeWindows) > 1 {
 		for wi, window := range worker.activeWindows[1:] {
 			lower := worker.activeWindows[wi]
@@ -298,23 +295,9 @@ func (sw *schedWorker) workerCompactWindows() {
 				if !lower.allocated.canHandleRequest(needRes, sw.wid, "compactWindows", worker.info) {
 					continue
 				}
-				log.Debugf("octopus: sched: move %v", todo.sector.ID)
 
 				moved = append(moved, ti)
-				// TODO: temporarily hardcode implemention for recovery. better sort all every time?
-				log.Debugf("octopus: sched: sector %v priority %d", todo.priority, todo.sector.ID)
-				//if todo.priority >= 1025 { // RecoveryingSectorPriority
-				//	insertion := []*workerRequest{todo}
-				//	lower.todo = append(insertion, lower.todo...)
-				//} else {
 				lower.todo = append(lower.todo, todo)
-				//}
-				tsStart := build.Clock.Now()
-				sort.SliceStable(lower.todo, func(i, j int) bool {
-					return lower.todo[i].priority > lower.todo[j].priority
-				})
-				elapsed := time.Since(tsStart)
-				log.Infof("octopus: sort todo window(%d) elapse: %v", len(lower.todo), elapsed)
 				lower.allocated.add(worker.info.Resources, needRes)
 				window.allocated.free(worker.info.Resources, needRes)
 			}
@@ -337,9 +320,8 @@ func (sw *schedWorker) workerCompactWindows() {
 	var compacted int
 	var newWindows []*schedWindow
 
-	for i, window := range worker.activeWindows {
+	for _, window := range worker.activeWindows {
 		if len(window.todo) == 0 {
-			log.Debugf("octopus: sched: compact activeWindow %d", i)
 			compacted++
 			continue
 		}
@@ -353,8 +335,7 @@ func (sw *schedWorker) workerCompactWindows() {
 
 func (sw *schedWorker) processAssignedWindows() {
 	sw.assignReadyWork()
-	// do not check preparing resources since we disabled resource check.
-	//sw.assignPreparingWork()
+	sw.assignPreparingWork()
 }
 
 func (sw *schedWorker) assignPreparingWork() {
@@ -371,13 +352,6 @@ assignLoop:
 
 			worker.lk.Lock()
 			for t, todo := range firstWindow.todo {
-				if _, ok := worker.info.TaskResources[todo.taskType]; ok {
-					freeCount := sw.sched.getTaskFreeCount(sw.wid, todo.taskType)
-					if freeCount <= 0 {
-						log.Debugf("octopus: sched todo: worker %v %v: no free run quota", sw.wid, todo.taskType)
-						continue
-					}
-				}
 				needRes := worker.info.Resources.ResourceSpec(todo.sector.ProofType, todo.taskType)
 				if worker.preparing.canHandleRequest(needRes, sw.wid, "startPreparing", worker.info) {
 					tidx = t
@@ -420,7 +394,6 @@ func (sw *schedWorker) assignReadyWork() {
 	worker.lk.Lock()
 	defer worker.lk.Unlock()
 
-	// always false, because we disabled resource check.
 	if worker.active.hasWorkWaiting() {
 		// prepared tasks have priority
 		return
@@ -436,17 +409,8 @@ assignLoop:
 			tidx := -1
 
 			for t, todo := range firstWindow.todo {
-				// we don't calculate resources, so all tasks are ready.
-				//if todo.taskType != sealtasks.TTCommit1 && todo.taskType != sealtasks.TTCommit2 { // todo put in task
-				//	continue
-				//}
-
-				if _, ok := worker.info.TaskResources[todo.taskType]; ok {
-					freeCount := sw.sched.getTaskFreeCount(sw.wid, todo.taskType)
-					if freeCount <= 0 {
-						log.Debugf("octopus: sched todo: worker %v %v: no free run quota", sw.wid, todo.taskType)
-						continue
-					}
+				if todo.taskType != sealtasks.TTCommit1 && todo.taskType != sealtasks.TTCommit2 { // todo put in task
+					continue
 				}
 
 				needRes := storiface.ResourceTable[todo.taskType][todo.sector.ProofType]
@@ -489,15 +453,11 @@ func (sw *schedWorker) startProcessingTask(req *workerRequest) error {
 
 	needRes := w.info.Resources.ResourceSpec(req.sector.ProofType, req.taskType)
 
-	sh.taskAddOne(sw.wid, req.taskType)
-
 	w.lk.Lock()
 	w.preparing.add(w.info.Resources, needRes)
 	w.lk.Unlock()
 
 	go func() {
-		//time.Sleep(time.Duration(1) * time.Minute)
-		//log.Info("sleep 1 min")
 		// first run the prepare step (e.g. fetching sector data from other worker)
 		tw := sh.workTracker.worker(sw.wid, w.info, w.workerRpc)
 		tw.start()
@@ -507,8 +467,6 @@ func (sw *schedWorker) startProcessingTask(req *workerRequest) error {
 		if err != nil {
 			w.preparing.free(w.info.Resources, needRes)
 			w.lk.Unlock()
-
-			sh.taskReduceOne(sw.wid, req.taskType)
 
 			select {
 			case sw.taskDone <- struct{}{}:
@@ -550,7 +508,6 @@ func (sw *schedWorker) startProcessingTask(req *workerRequest) error {
 			// Do the work!
 			tw.start()
 			err = <-werr
-			sh.taskReduceOne(sw.wid, req.taskType)
 
 			select {
 			case req.ret <- workerResponse{err: err}:
@@ -580,7 +537,6 @@ func (sw *schedWorker) startProcessingReadyTask(req *workerRequest) error {
 	needRes := w.info.Resources.ResourceSpec(req.sector.ProofType, req.taskType)
 
 	w.active.add(w.info.Resources, needRes)
-	sh.taskAddOne(sw.wid, req.taskType)
 
 	go func() {
 		// Do the work!
@@ -598,7 +554,6 @@ func (sw *schedWorker) startProcessingReadyTask(req *workerRequest) error {
 
 		w.lk.Lock()
 
-		sh.taskReduceOne(sw.wid, req.taskType)
 		w.active.free(w.info.Resources, needRes)
 
 		select {

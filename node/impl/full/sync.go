@@ -27,10 +27,6 @@ type SyncAPI struct {
 	NetName     dtypes.NetworkName
 }
 
-func (a *SyncAPI) NetExchangeCosts(ctx context.Context) ([]api.ExchangeClientCost, error) {
-	return a.Syncer.Exchange.GetPeersCost(), nil
-}
-
 func (a *SyncAPI) SyncState(ctx context.Context) (*api.SyncState, error) {
 	states := a.Syncer.State()
 
@@ -101,7 +97,6 @@ func (a *SyncAPI) SyncSubmitBlock(ctx context.Context, blk *types.BlockMsg) erro
 		return xerrors.Errorf("serializing block for pubsub publishing failed: %w", err)
 	}
 
-	log.Infow("before PubSub. time: %s", build.Clock.Now())
 	return a.PubSub.Publish(build.BlocksTopic(a.NetName), b) //nolint:staticcheck
 }
 

@@ -15,9 +15,6 @@ const (
 	TTFetch  TaskType = "seal/v0/fetch"
 	TTUnseal TaskType = "seal/v0/unseal"
 
-	// octopus: any of p2 and c2
-	TTAnyOfPC2C2 TaskType = "pc2c2"
-
 	TTReplicaUpdate         TaskType = "seal/v0/replicaupdate"
 	TTProveReplicaUpdate1   TaskType = "seal/v0/provereplicaupdate/1"
 	TTProveReplicaUpdate2   TaskType = "seal/v0/provereplicaupdate/2"
@@ -36,8 +33,8 @@ var order = map[TaskType]int{
 	TTProveReplicaUpdate2: 7,
 	TTProveReplicaUpdate1: 6,
 	TTPreCommit1:          5,
-	TTCommit2:             4,
-	TTPreCommit2:          3,
+	TTPreCommit2:          4,
+	TTCommit2:             3,
 	TTCommit1:             2,
 	TTUnseal:              1,
 

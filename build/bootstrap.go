@@ -15,9 +15,9 @@ import (
 var bootstrapfs embed.FS
 
 func BuiltinBootstrap() ([]peer.AddrInfo, error) {
-	//if DisableBuiltinAssets {
-	//	return nil, nil
-	//}
+	if DisableBuiltinAssets {
+		return nil, nil
+	}
 	if BootstrappersFile != "" {
 		spi, err := bootstrapfs.ReadFile(path.Join("bootstrap", BootstrappersFile))
 		if err != nil {

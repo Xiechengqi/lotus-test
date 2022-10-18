@@ -7,7 +7,6 @@ import (
 	"syscall"
 
 	"github.com/detailyang/go-fallocate"
-	"github.com/qiniupd/qiniu-go-sdk/syncdata/operation"
 	"golang.org/x/xerrors"
 
 	rlepluslazy "github.com/filecoin-project/go-bitfield/rle"
@@ -37,14 +36,6 @@ type PartialFile struct {
 	allocated rlepluslazy.RLE
 
 	file *os.File
-}
-
-func NewPartialFile(maxPiece abi.PaddedPieceSize, path string, allocated rlepluslazy.RLE) *PartialFile {
-	return &PartialFile{
-		maxPiece:  maxPiece,
-		path:      path,
-		allocated: allocated,
-	}
 }
 
 func writeTrailer(maxPieceSize int64, w *os.File, r rlepluslazy.RunIterator) error {
@@ -105,36 +96,10 @@ func CreatePartialFile(maxPieceSize abi.PaddedPieceSize, path string) (*PartialF
 	return OpenPartialFile(maxPieceSize, path)
 }
 
-// fileExists checks if a file exists and is not a directory before we
-// try using it to prevent further errors.
-func fileExists(filename string) bool {
-	info, err := os.Stat(filename)
-	if os.IsNotExist(err) {
-		return false
-	}
-	return !info.IsDir()
-}
-
 func OpenPartialFile(maxPieceSize abi.PaddedPieceSize, path string) (*PartialFile, error) {
-	var (
-		f   *os.File
-		err error
-	)
-	if fileExists(path) {
-		f, err = os.OpenFile(path, os.O_RDWR, 0644) // nolint
-		if err != nil {
-			return nil, xerrors.Errorf("openning partial file '%s': %w", path, err)
-		}
-	} else {
-		if os.Getenv("QINIU") != "" {
-			d := operation.NewDownloaderV2()
-			f, err = d.DownloadFile(path, path)
-			if err != nil {
-				return nil, xerrors.Errorf("download partial file '%s': %w", path, err)
-			}
-		} else {
-			return nil, xerrors.Errorf("octopus: openning partial file '%s': not exists and qiniu is not enabled.", path)
-		}
+	f, err := os.OpenFile(path, os.O_RDWR, 0644) // nolint
+	if err != nil {
+		return nil, xerrors.Errorf("openning partial file '%s': %w", path, err)
 	}
 
 	var rle rlepluslazy.RLE
@@ -213,11 +178,7 @@ func OpenPartialFile(maxPieceSize abi.PaddedPieceSize, path string) (*PartialFil
 }
 
 func (pf *PartialFile) Close() error {
-	if pf.file != nil {
-		return pf.file.Close()
-	} else {
-		return nil
-	}
+	return pf.file.Close()
 }
 
 func (pf *PartialFile) Writer(offset storiface.PaddedByteIndex, size abi.PaddedPieceSize) (io.Writer, error) {

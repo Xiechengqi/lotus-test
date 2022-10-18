@@ -35,7 +35,6 @@ type ErrBadSeed struct{ error }
 type ErrInvalidProof struct{ error }
 type ErrNoPrecommit struct{ error }
 type ErrCommitWaitFailed struct{ error }
-type ErrUnmatchCommR struct{ error }
 
 type ErrBadRU struct{ error }
 type ErrBadPR struct{ error }
@@ -188,15 +187,9 @@ func (m *Sealing) checkCommit(ctx context.Context, si SectorInfo, proof []byte, 
 		UnsealedCID:           *si.CommD,
 	})
 	if err != nil {
-		if *si.CommR != pci.Info.SealedCID {
-			return &ErrUnmatchCommR{xerrors.Errorf("on-chain sealed CID doesn't match!")}
-		}
 		return &ErrInvalidProof{xerrors.Errorf("verify seal: %w", err)}
 	}
 	if !ok {
-		if *si.CommR != pci.Info.SealedCID {
-			return &ErrUnmatchCommR{xerrors.Errorf("on-chain sealed CID doesn't match!")}
-		}
 		return &ErrInvalidProof{xerrors.New("invalid proof (compute error?)")}
 	}
 

@@ -146,10 +146,6 @@ func (a *MsigAPI) MsigCancelTxnHash(ctx context.Context, msig address.Address, t
 	return a.msigApproveOrCancelTxnHash(ctx, api.MsigCancel, msig, txID, src, to, amt, src, method, params)
 }
 
-func (a *MsigAPI) MsigCancelSimple(ctx context.Context, msig address.Address, txID uint64, from address.Address) (*api.MessagePrototype, error) {
-	return a.msigApproveOrCancelSimple(ctx, api.MsigCancel, msig, txID, from)
-}
-
 func (a *MsigAPI) MsigRemoveSigner(ctx context.Context, msig address.Address, proposer address.Address, toRemove address.Address, decrease bool) (*api.MessagePrototype, error) {
 	enc, actErr := serializeRemoveParams(toRemove, decrease)
 	if actErr != nil {

@@ -2,12 +2,9 @@ package storage
 
 import (
 	"context"
-	"github.com/filecoin-project/go-state-types/abi"
-	"os"
-	"strconv"
-	"strings"
 	"sync"
-	"time"
+
+	"github.com/filecoin-project/go-state-types/abi"
 
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/builtin/v8/miner"
@@ -213,7 +210,6 @@ func (p *proveHandler) run() {
 }
 
 func (p *proveHandler) processHeadChange(ctx context.Context, newTS *types.TipSet, di *dline.Info) {
-	log.Debugf("octopus: processHeadChange: newTS: %v di: %v", newTS, di.Index)
 	// If the post window has expired, abort the current proof
 	if p.current != nil && newTS.Height() >= p.current.di.Close {
 		// Cancel the context on the current proof
@@ -233,7 +229,6 @@ func (p *proveHandler) processHeadChange(ctx context.Context, newTS *types.TipSe
 	// If the proof for the current post window has been generated, check the
 	// next post window
 	_, complete := p.posts.get(di)
-	log.Debugf("octopus: di=%v complete=%v", di, complete)
 	for complete {
 		di = nextDeadline(di)
 		_, complete = p.posts.get(di)
@@ -242,19 +237,6 @@ func (p *proveHandler) processHeadChange(ctx context.Context, newTS *types.TipSe
 	// Check if the chain is above the Challenge height for the post window
 	if newTS.Height() < di.Challenge+ChallengeConfidence {
 		return
-	}
-
-	postClosePeriod := os.Getenv("POST_BEFORE_CLOSE_EPOCHS")
-	if postClosePeriod != "" {
-		period, err := strconv.Atoi(postClosePeriod)
-		if err == nil {
-			if newTS.Height() > di.Close-abi.ChainEpoch(period) {
-				log.Infof("octopus: wdpost: newTS(%v) > di.Close(%v) - %v", newTS.Height(), di.Close, period)
-				return
-			}
-		} else {
-			log.Errorf("octopus: parse POST_BEFORE_CLOSE_EPOCHS error: %v", err)
-		}
 	}
 
 	p.current = &currentPost{di: di}
@@ -281,7 +263,6 @@ func (p *proveHandler) processPostResult(res *postResult) {
 		return
 	}
 
-	log.Infof("octopus: processPostResult di=%d: current = nil & posts add", di.Index)
 	// Completed processing this proving window
 	p.current = nil
 
@@ -471,11 +452,6 @@ func (s *submitHandler) processPostReady(pi *postInfo) {
 // submitIfReady submits a proof if the chain is high enough and the proof
 // has been generated for this deadline
 func (s *submitHandler) submitIfReady(ctx context.Context, advance *types.TipSet, pw *postWindow) {
-	if os.Getenv("DISABLE_POST_MSG") == "true" {
-		log.Infof("octopus: DISABLE_POST_MSG=true, won't send post message.")
-		return
-	}
-
 	// If the window has expired, there's nothing more to do.
 	if advance.Height() >= pw.di.Close {
 		return
@@ -503,19 +479,8 @@ func (s *submitHandler) submitIfReady(ctx context.Context, advance *types.TipSet
 		return
 	}
 
-	log.Infof("octopus: SubmitStateSubmitting")
 	// Start submitting post
 	pw.submitState = SubmitStateSubmitting
-
-	postMsgDelay := os.Getenv("POST_MSG_DELAY")
-	if postMsgDelay != "" {
-		delay, err := strconv.Atoi(postMsgDelay)
-		if err == nil {
-			log.Infof("octopus: wdpost: delay %d secs to send post msg", delay)
-			time.Sleep(time.Duration(delay) * time.Second)
-		}
-	}
-
 	pw.abort = s.api.startSubmitPoST(ctx, advance, pw.di, posts, func(err error) {
 		s.submitResults <- &submitResult{pw: pw, err: err}
 	})
@@ -529,13 +494,7 @@ func (s *submitHandler) processSubmitResult(res *submitResult) {
 		log.Warnf("Aborted window post Submitting (Deadline: %+v)", res.pw.di)
 		s.api.onAbort(res.pw.ts, res.pw.di)
 
-		if strings.Contains(res.err.Error(), "invalid deadline") || strings.Contains(res.err.Error(), "already proven") {
-			log.Warnf("dl %v error: %v mark submit state to SubmitStateComplete", res.pw.di, res.err)
-			res.pw.submitState = SubmitStateComplete
-		} else {
-			res.pw.submitState = SubmitStateStart
-		}
-
+		res.pw.submitState = SubmitStateStart
 		return
 	}
 

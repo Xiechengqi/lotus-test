@@ -3,13 +3,9 @@ package storage
 import (
 	"bytes"
 	"context"
-	"fmt"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/filecoin-project/go-state-types/proof"
-	"github.com/filecoin-project/lotus/extern/sector-storage/storiface"
 
 	"github.com/filecoin-project/go-bitfield"
 	"github.com/filecoin-project/specs-storage/storage"
@@ -21,6 +17,7 @@ import (
 	"github.com/filecoin-project/go-state-types/dline"
 	"github.com/filecoin-project/go-state-types/network"
 	"github.com/ipfs/go-cid"
+
 	"go.opencensus.io/trace"
 	"golang.org/x/xerrors"
 
@@ -191,32 +188,29 @@ func (s *WindowPoStScheduler) runSubmitPoST(
 	return submitErr
 }
 
-func (s *WindowPoStScheduler) checkSectors(ctx context.Context, check bitfield.BitField, tsk types.TipSetKey) (bitfield.BitField, map[abi.SectorID]storiface.SectorPaths, error) {
+func (s *WindowPoStScheduler) checkSectors(ctx context.Context, check bitfield.BitField, tsk types.TipSetKey) (bitfield.BitField, error) {
 	mid, err := address.IDFromAddress(s.actor)
 	if err != nil {
-		return bitfield.BitField{}, nil, err
+		return bitfield.BitField{}, err
 	}
 
 	sectorInfos, err := s.api.StateMinerSectors(ctx, s.actor, &check, tsk)
 	if err != nil {
-		return bitfield.BitField{}, nil, err
+		return bitfield.BitField{}, err
 	}
 
-	//type checkSector struct {
-	//sealed cid.Cid
-	//update bool
-	//}
-	//sectors := make(map[abi.SectorNumber]checkSector)
+	type checkSector struct {
+		sealed cid.Cid
+		update bool
+	}
 
-	sectors := make(map[abi.SectorNumber]struct{})
+	sectors := make(map[abi.SectorNumber]checkSector)
 	var tocheck []storage.SectorRef
-	var update []bool
 	for _, info := range sectorInfos {
-		//sectors[info.SectorNumber] = checkSector{
-		//sealed: info.SealedCID,
-		//update: info.SectorKeyCID != nil,
-		//}
-		sectors[info.SectorNumber] = struct{}{}
+		sectors[info.SectorNumber] = checkSector{
+			sealed: info.SealedCID,
+			update: info.SectorKeyCID != nil,
+		}
 		tocheck = append(tocheck, storage.SectorRef{
 			ProofType: info.SealProof,
 			ID: abi.SectorID{
@@ -224,19 +218,17 @@ func (s *WindowPoStScheduler) checkSectors(ctx context.Context, check bitfield.B
 				Number: info.SectorNumber,
 			},
 		})
-		update = append(update, info.SectorKeyCID != nil)
 	}
 
-	bad, goodPaths, err := s.faultTracker.CheckProvable(ctx, s.proofType, tocheck, update, nil)
-	//bad, err := s.faultTracker.CheckProvable(ctx, s.proofType, tocheck, func(ctx context.Context, id abi.SectorID) (cid.Cid, bool, error) {
-	//	s, ok := sectors[id.Number]
-	//	if !ok {
-	//		return cid.Undef, false, xerrors.Errorf("sealed CID not found")
-	//	}
-	//	return s.sealed, s.update, nil
-	//})
+	bad, err := s.faultTracker.CheckProvable(ctx, s.proofType, tocheck, func(ctx context.Context, id abi.SectorID) (cid.Cid, bool, error) {
+		s, ok := sectors[id.Number]
+		if !ok {
+			return cid.Undef, false, xerrors.Errorf("sealed CID not found")
+		}
+		return s.sealed, s.update, nil
+	})
 	if err != nil {
-		return bitfield.BitField{}, nil, xerrors.Errorf("checking provable sectors: %w", err)
+		return bitfield.BitField{}, xerrors.Errorf("checking provable sectors: %w", err)
 	}
 	for id := range bad {
 		delete(sectors, id.Number)
@@ -249,7 +241,7 @@ func (s *WindowPoStScheduler) checkSectors(ctx context.Context, check bitfield.B
 		sbf.Set(uint64(s))
 	}
 
-	return sbf, goodPaths, nil
+	return sbf, nil
 }
 
 // declareRecoveries identifies sectors that were previously marked as faulty
@@ -296,7 +288,7 @@ func (s *WindowPoStScheduler) declareRecoveries(ctx context.Context, dlIdx uint6
 
 		faulty += uc
 
-		recovered, _, err := s.checkSectors(ctx, unrecovered, tsk)
+		recovered, err := s.checkSectors(ctx, unrecovered, tsk)
 		if err != nil {
 			return nil, nil, xerrors.Errorf("checking unrecovered sectors: %w", err)
 		}
@@ -407,7 +399,7 @@ func (s *WindowPoStScheduler) declareFaults(ctx context.Context, dlIdx uint64, p
 			return nil, nil, xerrors.Errorf("determining non faulty sectors: %w", err)
 		}
 
-		good, _, err := s.checkSectors(ctx, nonFaulty, tsk)
+		good, err := s.checkSectors(ctx, nonFaulty, tsk)
 		if err != nil {
 			return nil, nil, xerrors.Errorf("checking sectors: %w", err)
 		}
@@ -478,62 +470,55 @@ func (s *WindowPoStScheduler) declareFaults(ctx context.Context, dlIdx uint64, p
 }
 
 func (s *WindowPoStScheduler) asyncFaultRecover(di dline.Info, ts *types.TipSet) {
-	enableNextDeadlineCheck := os.Getenv("ENABLE_NEXT_DEADLINE_CHECK")
-	log.Debugf("octopus: runPoStCycle dl: %v", di.Index)
-	log.Infof("octopus: wd: ENABLE_NEXT_DEADLINE_CHECK=%v ", enableNextDeadlineCheck)
+	go func() {
+		// check faults / recoveries for the *next* deadline. It's already too
+		// late to declare them for this deadline
+		declDeadline := (di.Index + 2) % di.WPoStPeriodDeadlines
 
-	if enableNextDeadlineCheck == "" || enableNextDeadlineCheck == "true" {
-		go func() {
-			log.Debugf("octopus: wd: check faults / recoveries for the *next* deadline")
-			// check faults / recoveries for the *next* deadline. It's already too
-			// late to declare them for this deadline
-			declDeadline := (di.Index + 2) % di.WPoStPeriodDeadlines
+		partitions, err := s.api.StateMinerPartitions(context.TODO(), s.actor, declDeadline, ts.Key())
+		if err != nil {
+			log.Errorf("getting partitions: %v", err)
+			return
+		}
 
-			partitions, err := s.api.StateMinerPartitions(context.TODO(), s.actor, declDeadline, ts.Key())
-			if err != nil {
-				log.Errorf("getting partitions: %v", err)
-				return
+		var (
+			sigmsgs    []*types.SignedMessage
+			recoveries [][]miner.RecoveryDeclaration
+
+			// optionalCid returns the CID of the message, or cid.Undef is the
+			// message is nil. We don't need the argument (could capture the
+			// pointer), but it's clearer and purer like that.
+			optionalCid = func(sigmsg *types.SignedMessage) cid.Cid {
+				if sigmsg == nil {
+					return cid.Undef
+				}
+				return sigmsg.Cid()
 			}
+		)
 
-			var (
-				sigmsgs    []*types.SignedMessage
-				recoveries [][]miner.RecoveryDeclaration
+		if recoveries, sigmsgs, err = s.declareRecoveries(context.TODO(), declDeadline, partitions, ts.Key()); err != nil {
+			// TODO: This is potentially quite bad, but not even trying to post when this fails is objectively worse
+			log.Errorf("checking sector recoveries: %v", err)
+		}
 
-				// optionalCid returns the CID of the message, or cid.Undef is the
-				// message is nil. We don't need the argument (could capture the
-				// pointer), but it's clearer and purer like that.
-				optionalCid = func(sigmsg *types.SignedMessage) cid.Cid {
-					if sigmsg == nil {
-						return cid.Undef
+		// should always be true, skip journaling if not for some reason
+		if len(recoveries) == len(sigmsgs) {
+			for i, recovery := range recoveries {
+				// clone for function literal
+				recovery := recovery
+				msgCID := optionalCid(sigmsgs[i])
+				s.journal.RecordEvent(s.evtTypes[evtTypeWdPoStRecoveries], func() interface{} {
+					j := WdPoStRecoveriesProcessedEvt{
+						evtCommon:    s.getEvtCommon(err),
+						Declarations: recovery,
+						MessageCID:   msgCID,
 					}
-					return sigmsg.Cid()
-				}
-			)
-
-			if recoveries, sigmsgs, err = s.declareRecoveries(context.TODO(), declDeadline, partitions, ts.Key()); err != nil {
-				// TODO: This is potentially quite bad, but not even trying to post when this fails is objectively worse
-				log.Errorf("checking sector recoveries: %v", err)
+					j.Error = err
+					return j
+				})
 			}
-
-			// should always be true, skip journaling if not for some reason
-			if len(recoveries) == len(sigmsgs) {
-				for i, recovery := range recoveries {
-					// clone for function literal
-					recovery := recovery
-					msgCID := optionalCid(sigmsgs[i])
-					s.journal.RecordEvent(s.evtTypes[evtTypeWdPoStRecoveries], func() interface{} {
-						j := WdPoStRecoveriesProcessedEvt{
-							evtCommon:    s.getEvtCommon(err),
-							Declarations: recovery,
-							MessageCID:   msgCID,
-						}
-						j.Error = err
-						return j
-					})
-				}
-			}
-		}()
-	}
+		}
+	}()
 }
 
 // runPoStCycle runs a full cycle of the PoSt process:
@@ -581,8 +566,7 @@ func (s *WindowPoStScheduler) runPoStCycle(ctx context.Context, manual bool, di 
 
 	// Split partitions into batches, so as not to exceed the number of sectors
 	// allowed in a single message
-	//partitionBatches, err := s.batchPartitions(partitions, nv)
-	start, partitionBatches, err := s.assignPartitions(partitions, nv)
+	partitionBatches, err := s.batchPartitions(partitions, nv)
 	if err != nil {
 		return nil, err
 	}
@@ -610,18 +594,11 @@ func (s *WindowPoStScheduler) runPoStCycle(ctx context.Context, manual bool, di 
 		postSkipped := bitfield.New()
 		somethingToProve := false
 
-		maxRetries := 2 // default retry 1 time.
-		retriesStr := os.Getenv("POST_RETRIES")
-		if retriesStr != "" {
-			maxRetries, _ = strconv.Atoi(retriesStr)
-		}
 		// Retry until we run out of sectors to prove.
-		log.Debugf("octopus: max retries=%d", maxRetries)
-		for retries := 0; retries < maxRetries; retries++ {
+		for retries := 0; ; retries++ {
 			skipCount := uint64(0)
 			var partitions []miner.PoStPartition
 			var xsinfos []proof7.ExtendedSectorInfo
-			var goodPathsMap = make(map[abi.SectorID]storiface.SectorPaths)
 			for partIdx, partition := range batch {
 				// TODO: Can do this in parallel
 				toProve, err := bitfield.SubtractBitField(partition.LiveSectors, partition.FaultySectors)
@@ -633,12 +610,9 @@ func (s *WindowPoStScheduler) runPoStCycle(ctx context.Context, manual bool, di 
 					return nil, xerrors.Errorf("adding recoveries to set of sectors to prove: %w", err)
 				}
 
-				good, goodPaths, err := s.checkSectors(ctx, toProve, ts.Key())
+				good, err := s.checkSectors(ctx, toProve, ts.Key())
 				if err != nil {
 					return nil, xerrors.Errorf("checking sectors to skip: %w", err)
-				}
-				for i, p := range goodPaths {
-					goodPathsMap[i] = p
 				}
 
 				good, err = bitfield.SubtractBitField(good, postSkipped)
@@ -669,10 +643,9 @@ func (s *WindowPoStScheduler) runPoStCycle(ctx context.Context, manual bool, di 
 
 				xsinfos = append(xsinfos, ssi...)
 				partitions = append(partitions, miner.PoStPartition{
-					Index:   uint64(start + batchPartitionStartIdx + partIdx),
+					Index:   uint64(batchPartitionStartIdx + partIdx),
 					Skipped: skipped,
 				})
-				log.Infof("octopus: wd: di: %v, partition index: %v", di.Index, uint64(start+batchPartitionStartIdx+partIdx))
 			}
 
 			if len(xsinfos) == 0 {
@@ -694,17 +667,7 @@ func (s *WindowPoStScheduler) runPoStCycle(ctx context.Context, manual bool, di 
 				return nil, err
 			}
 
-			//defer func() {
-			//	if r := recover(); r != nil {
-			//		log.Errorf("recover: %s", r)
-			//	}
-			//}()
-			//log.Debug("octopus: good paths:")
-			//for g, p := range goodPathsMap {
-			//	log.Debugf("octopus: sector %d -> paths: %s %s", g, p.Cache, p.Sealed)
-			//}
-			ctxWithPaths := context.WithValue(ctx, "goodPaths", goodPathsMap)
-			postOut, ps, err := s.prover.GenerateWindowPoSt(ctxWithPaths, abi.ActorID(mid), xsinfos, append(abi.PoStRandomness{}, rand...))
+			postOut, ps, err := s.prover.GenerateWindowPoSt(ctx, abi.ActorID(mid), xsinfos, append(abi.PoStRandomness{}, rand...))
 			elapsed := time.Since(tsStart)
 			log.Infow("computing window post", "batch", batchIdx, "elapsed", elapsed, "skip", len(ps), "err", err)
 			if err != nil {
@@ -796,97 +759,6 @@ func (s *WindowPoStScheduler) runPoStCycle(ctx context.Context, manual bool, di 
 		posts = append(posts, params)
 	}
 	return posts, nil
-}
-
-func (s *WindowPoStScheduler) assignPartitions(partitions []api.Partition, nv network.Version) (int, [][]api.Partition, error) {
-	emptyBatches := make([][]api.Partition, 0, 0)
-	if len(partitions) <= 0 {
-		return 0, emptyBatches, nil
-	}
-
-	minerIndexString := os.Getenv("POST_MINER_INDEX")
-	log.Infof("octopus: wd: POST_MINER_INDEX=%s", minerIndexString)
-	if minerIndexString == "" {
-		// if POST_MINER_INDEX is not set, follow official logics
-		p, e := s.batchPartitions(partitions, nv)
-		return 0, p, e
-	}
-
-	minerIndex, err := strconv.Atoi(minerIndexString)
-	if err != nil {
-		log.Errorf("octopus: wd: invalid POST_MINER_INDEX: %s %v", minerIndexString, err)
-		return 0, emptyBatches, nil
-	}
-
-	maxPartitions, err := strconv.Atoi(os.Getenv("POST_MAX_PARTITIONS"))
-	if err != nil {
-		log.Errorf("octopus: wd: invalid POST_MAX_PARTITIONS: %s %v", os.Getenv("POST_MAX_PARTITIONS"), err)
-		return 0, emptyBatches, nil
-	} else {
-		if maxPartitions > 10 {
-			maxPartitions = 10
-			log.Warnf("octopus: wd: POST_MAX_PARTITIONS=%d, reset to 10", maxPartitions)
-		} else {
-			log.Infof("octopus: wd: POST_MAX_PARTITIONS=%d", maxPartitions)
-		}
-	}
-
-	var partitionsPerMiner int
-	var start int
-	var end int
-
-	totalPostMinersString := os.Getenv("POST_TOTAL_MINERS")
-	log.Infof("octopus: POST_TOTAL_MINERS=%s", totalPostMinersString)
-	if totalPostMinersString == "" {
-		start = minerIndex * maxPartitions
-		end = start + maxPartitions
-	} else {
-		totalPostMiners, err := strconv.Atoi(totalPostMinersString)
-		if err != nil {
-			log.Errorf("invalid POST_TOTAL_MINERS: %s %w", os.Getenv("POST_TOTAL_MINERS"), err)
-			return 0, emptyBatches, nil
-		}
-
-		partitionsPerMiner = len(partitions) / totalPostMiners
-		if partitionsPerMiner >= maxPartitions {
-			start = minerIndex * maxPartitions
-			end = start + maxPartitions
-		} else {
-			remainder := len(partitions) % totalPostMiners
-			if remainder == 0 {
-				start = minerIndex * partitionsPerMiner
-				end = start + partitionsPerMiner
-			} else {
-				if minerIndex < remainder {
-					start = minerIndex * (partitionsPerMiner + 1)
-					end = start + (partitionsPerMiner + 1)
-				} else {
-					start = remainder*(partitionsPerMiner+1) + (minerIndex-remainder)*partitionsPerMiner
-					end = start + partitionsPerMiner
-				}
-			}
-		}
-	}
-
-	if start >= len(partitions) {
-		log.Errorf("octopus: wd: invalid POST_MINER_INDEX: %s: %d exceeds partition length %d", minerIndexString, start, len(partitions))
-		return 0, emptyBatches, nil
-	}
-	if end > len(partitions) {
-		end = len(partitions)
-	}
-	log.Infof("octopus: wd: post miner %d:  partitions range %d -> %d", minerIndex, start, end)
-	if os.Getenv("WDPOST_INDIVIDUAL_BATCH") == "true" {
-		batches := make([][]api.Partition, 0, end-start)
-		for i := start; i < end; i++ {
-			batches = append(batches, partitions[i:i+1])
-		}
-		return start, batches, nil
-	} else {
-		batches := make([][]api.Partition, 0, 1)
-		batches = append(batches, partitions[start:end])
-		return start, batches, nil
-	}
 }
 
 func (s *WindowPoStScheduler) batchPartitions(partitions []api.Partition, nv network.Version) ([][]api.Partition, error) {
@@ -1008,11 +880,6 @@ func (s *WindowPoStScheduler) submitPoStMessage(ctx context.Context, proof *mine
 		return nil, err
 	}
 
-	var parLog = ""
-	for _, p := range proof.Partitions {
-		parLog = fmt.Sprintf("%s,%d", parLog, p.Index)
-	}
-	log.Infof("Try to Submitted window post: (deadline %d partitions %s)", proof.Deadline, parLog)
 	sm, err := s.api.MpoolPushMessage(ctx, msg, spec)
 	if err != nil {
 		return nil, xerrors.Errorf("pushing message to mpool: %w", err)
@@ -1057,7 +924,6 @@ func (s *WindowPoStScheduler) prepareMessage(ctx context.Context, msg *types.Mes
 		log.Errorw("estimating gas", "error", err)
 		return nil
 	}
-	log.Infof("*gm.GasFeeCap %v", gm.GasFeeCap)
 	*msg = *gm
 
 	// calculate a more frugal estimation; premium is estimated to guarantee
@@ -1097,7 +963,6 @@ func (s *WindowPoStScheduler) prepareMessage(ctx context.Context, msg *types.Mes
 
 		messagepool.CapGasFee(mff, msg, &api.MessageSendSpec{MaxFee: big.Min(big.Sub(avail, msg.Value), msg.RequiredFunds())})
 	}
-	log.Infof("msg.GasFeeCap %v", msg.GasFeeCap)
 	return nil
 }
 

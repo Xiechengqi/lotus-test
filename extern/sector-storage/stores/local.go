@@ -3,20 +3,14 @@ package stores
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"math/bits"
 	"math/rand"
 	"os"
-	pathx "path"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"sync"
-	"syscall"
 	"time"
 
-	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/go-state-types/proof"
 
 	"golang.org/x/xerrors"
@@ -25,7 +19,6 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/specs-storage/storage"
 
-	"github.com/filecoin-project/lotus/extern/sector-storage/ffiwrapper"
 	"github.com/filecoin-project/lotus/extern/sector-storage/fsutil"
 	"github.com/filecoin-project/lotus/extern/sector-storage/storiface"
 )
@@ -77,9 +70,6 @@ type LocalStorage interface {
 
 const MetaFile = "sectorstore.json"
 
-const MaxDiskUsage = int64(23 * 1024 * 1024 * 1024 * 1024)
-const MinDiskUsage = int64(10 * 1024 * 1024 * 1024 * 1024)
-
 type Local struct {
 	localStorage LocalStorage
 	index        SectorIndex
@@ -87,25 +77,19 @@ type Local struct {
 
 	paths map[storiface.ID]*path
 
-	localLk    sync.RWMutex
-	finalizeLk sync.RWMutex
+	localLk sync.RWMutex
 }
 
 type path struct {
 	local      string // absolute local path
 	maxStorage uint64
-	canStore   bool
 
 	reserved     int64
 	reservations map[abi.SectorID]storiface.SectorFileType
 }
 
 func (p *path) stat(ls LocalStorage) (fsutil.FsStat, error) {
-	tsStart := build.Clock.Now()
 	stat, err := ls.Stat(p.local)
-	elapsed := time.Since(tsStart)
-	log.Debugf("octopus: statfs %s elapse: %v", p.local, elapsed)
-
 	if err != nil {
 		return fsutil.FsStat{}, xerrors.Errorf("stat %s: %w", p.local, err)
 	}
@@ -212,7 +196,6 @@ func (st *Local) OpenPath(ctx context.Context, p string) error {
 		local: p,
 
 		maxStorage:   meta.MaxStorage,
-		canStore:     meta.CanStore,
 		reserved:     0,
 		reservations: map[abi.SectorID]storiface.SectorFileType{},
 	}
@@ -236,12 +219,8 @@ func (st *Local) OpenPath(ctx context.Context, p string) error {
 		return xerrors.Errorf("declaring storage in index: %w", err)
 	}
 
-	ifDeclareSectors := os.Getenv("DECLARE_SECTORS")
-	log.Infof("ENV DECLARE_SECTORS: %s", ifDeclareSectors)
-	if ifDeclareSectors == "true" {
-		if err := st.declareSectors(ctx, p, meta.ID, meta.CanStore); err != nil {
-			return err
-		}
+	if err := st.declareSectors(ctx, p, meta.ID, meta.CanStore); err != nil {
+		return err
 	}
 
 	st.paths[meta.ID] = out
@@ -314,64 +293,7 @@ func (st *Local) Redeclare(ctx context.Context) error {
 	return nil
 }
 
-func (st *Local) loadQiniuSectors(ctx context.Context, p string, id storiface.ID, primary bool) error {
-	//加载扇区逻辑由默认加载改为显示打开开关才能加载，避免lotus-worker也去加载扇区，用法如下：
-	//QINIU=/root/cfg.toml QINIU_LOAD_SECTORS=true ./lotus-miner run
-	sectors := ffiwrapper.QiniuLoadSectors(p)
-	for _, v := range sectors {
-		if ffiwrapper.CheckFetching(p, v) {
-			log.Debugf("QINIU skip fetching directory  %d(t:%d) -> %s", v, id)
-			continue
-		}
-		//加载sealed文件
-		if strings.Contains(v, storiface.FTSealed.String()) {
-			sector, err := storiface.ParseSectorID(pathx.Base(v))
-			if err != nil {
-				continue
-			}
-			log.Debugf("QINIU load sector %s %s", sector, v)
-			//declare sealed
-			if err := st.index.StorageDeclareSector(ctx, id, sector, storiface.FTSealed, primary); err != nil {
-				return xerrors.Errorf("QINIU declare sector %s(t:%d) -> %s: %w", v, storiface.FTSealed, id, err)
-			}
-
-			// declare cache
-			if err := st.index.StorageDeclareSector(ctx, id, sector, storiface.FTCache, primary); err != nil {
-				return xerrors.Errorf("QINIU declare sector cache %s(t:%d) -> %s: %w", v, storiface.FTCache, id, err)
-			}
-		}
-		//加载cache文件
-		// if strings.Contains(v, storiface.FTCache.String()) && strings.Contains(v, "p_aux") {
-		// 	sector, err := storiface.ParseSectorID(pathx.Base(pathx.Dir(v)))
-		// 	if err != nil {
-		// 		continue
-		// 	}
-		// 	log.Debugf("QINIU load sector %s %s", sector, v)
-		// 	if err := st.index.StorageDeclareSector(ctx, id, sector, storiface.FTCache, primary); err != nil {
-		// 		return xerrors.Errorf("QINIU declare sector %s(t:%d) -> %s: %w", v, storiface.FTCache, id, err)
-		// 	}
-		// }
-		// //加载unsealed文件
-		// if strings.Contains(v, storiface.FTUnsealed.String()) {
-		// 	sector, err := storiface.ParseSectorID(pathx.Base(v))
-		// 	if err != nil {
-		// 		continue
-		// 	}
-
-		// 	if err := st.index.StorageDeclareSector(ctx, id, sector, storiface.FTUnsealed, primary); err != nil {
-		// 		return xerrors.Errorf("declare sector %s(t:%d) -> %s: %w", v, storiface.FTUnsealed, id, err)
-		// 	}
-		// }
-	}
-	return nil
-}
-
 func (st *Local) declareSectors(ctx context.Context, p string, id storiface.ID, primary bool) error {
-	if ffiwrapper.QiniuFeatureEnabled(ffiwrapper.QiniuFeatureLoadSectors) {
-		if err := st.loadQiniuSectors(ctx, p, id, primary); err != nil {
-			return err
-		}
-	}
 	for _, t := range storiface.PathTypes {
 		ents, err := ioutil.ReadDir(filepath.Join(p, t.String()))
 		if err != nil {
@@ -386,10 +308,7 @@ func (st *Local) declareSectors(ctx context.Context, p string, id storiface.ID, 
 		}
 
 		for _, ent := range ents {
-			if ent.Name() == fetchTempSubdir {
-				continue
-			}
-			if strings.HasSuffix(ent.Name(), ".tmp") {
+			if ent.Name() == FetchTempSubdir {
 				continue
 			}
 
@@ -407,61 +326,9 @@ func (st *Local) declareSectors(ctx context.Context, p string, id storiface.ID, 
 	return nil
 }
 
-func (st *Local) DeclareSectors(ctx context.Context, s []abi.SectorID) (map[abi.SectorNumber][]storiface.SectorFileType, error) {
-	result := make(map[abi.SectorNumber][]storiface.SectorFileType)
-	for id, value := range st.paths { //遍历存储
-		stinfo, err := st.index.StorageInfo(ctx, id)
-		if err != nil {
-			log.Errorw("DeclareSectors--", "storageid:", id, "err:", err)
-			continue
-		}
-		if stinfo.CanStore == false {
-			continue
-		}
-
-		for _, t := range storiface.PathTypes { //遍历PathTypes
-			path := filepath.Join(value.local, t.String())
-			for _, v := range s { //需要加载到内存的扇区
-				temp := fmt.Sprintf("s-t0%d-%d", v.Miner, v.Number)
-				realpath := filepath.Join(path, temp)
-				if _, err := os.Stat(realpath); err != nil {
-					continue
-				} else {
-					if err := st.index.StorageDeclareSector(ctx, id, v, t, stinfo.CanStore); err != nil {
-						log.Errorw("DeclareSectorsErr---", "realpath:", realpath, "err:", err)
-					} else {
-						if _, ok := result[v.Number]; !ok {
-							result[v.Number] = []storiface.SectorFileType{t}
-						} else {
-							result[v.Number] = append(result[v.Number], t)
-						}
-						log.Debugw("DeclareSectorsSuccess---", "realpath:", realpath)
-					}
-				}
-			}
-		}
-
-	}
-	return result, nil
-}
-
 func (st *Local) reportHealth(ctx context.Context) {
 	// randomize interval by ~10%
-	intervalStr := os.Getenv("STORAGE_HEARTBEAT_INTERVAL")
-	log.Infof("octopus: env STORAGE_HEARTBEAT_INTERVAL=%s", intervalStr)
-	var hi time.Duration
-	if intervalStr == "" {
-		hi = HeartbeatInterval
-	} else {
-		intervalInt, err := strconv.Atoi(intervalStr)
-		if err != nil {
-			log.Errorf("octopus: invalid STORAGE_HEARTBEAT_INTERVAL %s", intervalStr)
-			hi = HeartbeatInterval
-		} else {
-			hi = time.Duration(intervalInt) * time.Second
-		}
-	}
-	interval := (hi*100_000 + time.Duration(rand.Int63n(10_000))) / 100_000
+	interval := (HeartbeatInterval*100_000 + time.Duration(rand.Int63n(10_000))) / 100_000
 
 	for {
 		select {
@@ -529,47 +396,6 @@ func (st *Local) Reserve(ctx context.Context, sid storage.SectorRef, ft storifac
 			return nil, xerrors.Errorf("getting local storage stat: %w", err)
 		}
 
-		//tsStart := build.Clock.Now()
-		//used, err := st.localStorage.DiskUsage(p.local)
-		//elapsed := time.Since(tsStart)
-		//log.Infof("octopus: Reserve DiskUsage elapsed %v", elapsed)
-
-		//if err != nil {
-		//	log.Errorf("failed to get disk usage %s, %+v", p.local, err)
-		//	return nil, storiface.Err(storiface.ErrTempAllocateSpace, err)
-		//} else {
-		//maxDiskUsage := MaxDiskUsage
-		//maxDiskUsageStr := os.Getenv("MAX_DISK_USAGE")
-		//if maxDiskUsageStr != "" {
-		//	m, err := strconv.ParseInt(maxDiskUsageStr, 10, 64)
-		//	if err == nil {
-		//		maxDiskUsage = m
-		//	}
-		//}
-		//if used > maxDiskUsage {
-		//	log.Warnf("Current disk usage: %d(bytes)", used)
-		//	return nil, storiface.Err(storiface.ErrTempAllocateSpace, xerrors.Errorf(storiface.NotEnoughSpace))
-		//} else {
-		//	log.Infof("Current disk usage: %d(bytes)", used)
-		//}
-		//
-		//if retErr != nil {
-		//	minDiskUsage := MinDiskUsage
-		//	minDiskUsageStr := os.Getenv("MIN_DISK_USAGE")
-		//	if minDiskUsageStr != "" {
-		//		m, err := strconv.ParseInt(minDiskUsageStr, 10, 64)
-		//		if err == nil {
-		//			minDiskUsage = m
-		//		}
-		//	}
-		//	if used < minDiskUsage {
-		//		if os.Getenv("PRESERVED_ABILITY") != "" {
-		//			retErr = xerrors.Errorf(storiface.LowUsedSpace)
-		//		}
-		//	}
-		//}
-		//}
-
 		overhead := int64(overheadTab[fileType]) * int64(ssize) / storiface.FSOverheadDen
 
 		if stat.Available < overhead {
@@ -615,21 +441,11 @@ func (st *Local) AcquireSector(ctx context.Context, sid storage.SectorRef, exist
 	var out storiface.SectorPaths
 	var storageIDs storiface.SectorPaths
 
-	ept := ctx.Value("pathTypeForExisting")
-	pathTypeForExisting := false
-	if p, ok := ept.(bool); ok {
-		if p {
-			log.Debugf("octopus: context existingPathType=%v", ept)
-			pathTypeForExisting = true
-		}
-	}
-
 	for _, fileType := range storiface.PathTypes {
 		if fileType&existing == 0 {
 			continue
 		}
 
-		log.Debugf("octopus: StorageFindSector file type %v: sector %v", fileType, sid.ID.Number)
 		si, err := st.index.StorageFindSector(ctx, sid.ID, fileType, ssize, false)
 		if err != nil {
 			log.Warnf("finding existing sector %d(t:%d) failed: %+v", sid, fileType, err)
@@ -637,28 +453,13 @@ func (st *Local) AcquireSector(ctx context.Context, sid storage.SectorRef, exist
 		}
 
 		for _, info := range si {
-			log.Debugf("octopus: StorageFindSector file type %v: sector %v storage id %v", fileType, sid.ID.Number, info.ID)
 			p, ok := st.paths[info.ID]
-			log.Debugf("octopus: StorageFindSector file type %v: sector %v path %v", fileType, sid.ID.Number, p)
 			if !ok {
 				continue
 			}
 
 			if p.local == "" { // TODO: can that even be the case?
-				log.Debugf("octopus: p.local is empty")
 				continue
-			}
-
-			if pathTypeForExisting {
-				if (pathType == storiface.PathSealing) && !info.CanSeal {
-					log.Debugf("octopus: existing path type %v, %v can't seal", pathType, info.ID)
-					continue
-				}
-
-				if (pathType == storiface.PathStorage) && !info.CanStore {
-					log.Debugf("octopus: existing path type %v, %v can't store", pathType, info.ID)
-					continue
-				}
 			}
 
 			spath := p.sectorPath(sid.ID, fileType)
@@ -676,7 +477,6 @@ func (st *Local) AcquireSector(ctx context.Context, sid storage.SectorRef, exist
 		}
 
 		sis, err := st.index.StorageBestAlloc(ctx, fileType, ssize, pathType)
-		log.Debugf("octopus: StorageBestAlloc pathType=%v fileType=%v len(sis)=%d", pathType, fileType, len(sis))
 		if err != nil {
 			return storiface.SectorPaths{}, storiface.SectorPaths{}, xerrors.Errorf("finding best storage for allocating : %w", err)
 		}
@@ -686,24 +486,19 @@ func (st *Local) AcquireSector(ctx context.Context, sid storage.SectorRef, exist
 
 		for _, si := range sis {
 			p, ok := st.paths[si.ID]
-			log.Debugf("octopus: check sis: %v", si.ID)
 			if !ok {
-				log.Debugf("octopus: sis: %v not in paths", si.ID)
 				continue
 			}
 
 			if p.local == "" { // TODO: can that even be the case?
-				log.Debugf("octopus: %v local is empty", si.ID)
 				continue
 			}
 
 			if (pathType == storiface.PathSealing) && !si.CanSeal {
-				log.Debugf("octopus: %v can't seal", si.ID)
 				continue
 			}
 
 			if (pathType == storiface.PathStorage) && !si.CanStore {
-				log.Debugf("octopus: %v can't store", si.ID)
 				continue
 			}
 
@@ -750,25 +545,6 @@ func (st *Local) Local(ctx context.Context) ([]storiface.StoragePath, error) {
 		})
 	}
 
-	return out, nil
-}
-
-func (st *Local) LocalPaths(ctx context.Context) ([]storiface.StoragePath, error) {
-	st.localLk.RLock()
-	defer st.localLk.RUnlock()
-
-	var out []storiface.StoragePath
-	for id, p := range st.paths {
-		if p.local == "" {
-			continue
-		}
-
-		out = append(out, storiface.StoragePath{
-			ID:        id,
-			LocalPath: p.local,
-			CanStore:  p.canStore,
-		})
-	}
 	return out, nil
 }
 
@@ -844,21 +620,6 @@ func (st *Local) removeSector(ctx context.Context, sid abi.SectorID, typ storifa
 		return nil
 	}
 
-	forceRemove := false
-	sp := ctx.Value("forceRemove")
-	if p, ok := sp.(bool); ok {
-		if p {
-			forceRemove = true
-		}
-	}
-
-	removeCanStore := os.Getenv("REMOVE_CAN_STORE")
-	log.Debugf("octopus: env REMOVE_CAN_STORE=%s", removeCanStore)
-	if !forceRemove && removeCanStore != "true" && p.canStore {
-		log.Infof("octopus: storage id(%s) path(%s) can store, cancel remove.", storage, p.local)
-		return nil
-	}
-
 	if p.local == "" { // TODO: can that even be the case?
 		return nil
 	}
@@ -880,12 +641,6 @@ func (st *Local) removeSector(ctx context.Context, sid abi.SectorID, typ storifa
 }
 
 func (st *Local) MoveStorage(ctx context.Context, s storage.SectorRef, types storiface.SectorFileType) error {
-	log.Debugf("octopus: MoveStorage %v: wait lock", s.ID.Number)
-	st.finalizeLk.Lock()
-	defer st.finalizeLk.Unlock()
-
-	log.Debugf("octopus: MoveStorage %v: lock acquired", s.ID.Number)
-
 	dest, destIds, err := st.AcquireSector(ctx, s, storiface.FTNone, types, storiface.PathStorage, storiface.AcquireMove)
 	if err != nil {
 		return xerrors.Errorf("acquire dest storage: %w", err)
@@ -895,9 +650,6 @@ func (st *Local) MoveStorage(ctx context.Context, s storage.SectorRef, types sto
 	if err != nil {
 		return xerrors.Errorf("acquire src storage: %w", err)
 	}
-
-	tsStart := build.Clock.Now()
-	log.Infof("octopus: MoveStorage started, sector ID: %v.", s.ID.Number)
 
 	for _, fileType := range storiface.PathTypes {
 		if fileType&types == 0 {
@@ -926,115 +678,19 @@ func (st *Local) MoveStorage(ctx context.Context, s storage.SectorRef, types sto
 
 		log.Debugf("moving %v(%d) to storage: %s(se:%t; st:%t) -> %s(se:%t; st:%t)", s, fileType, sst.ID, sst.CanSeal, sst.CanStore, dst.ID, dst.CanSeal, dst.CanStore)
 
-		//if err := move(storiface.PathByType(src, fileType), storiface.PathByType(dest, fileType)); err != nil {
-		//	// TODO: attempt some recovery (check if src is still there, re-declare)
-		//	return xerrors.Errorf("moving sector %v(%d): %w", s, fileType, err)
-		//}
-		srcPath := storiface.PathByType(src, fileType)
-
-		srcSizeInfo, err := fsutil.FileStatSize(srcPath)
-		if err != nil {
-			return xerrors.Errorf("filesize src path %s error: %w", srcPath, err)
-		}
-		log.Infof("octopus: src %s file size is %d", srcPath, srcSizeInfo)
-
-		destPath := storiface.PathByType(dest, fileType)
-		//tmpPath := fmt.Sprintf("%s.%v.%s", destPath, time.Now().UnixNano(), "tmp")
-
-		storageType := os.Getenv("STORAGE_TYPE")
-		var tmpPath string
-		if storageType == "QINIU" {
-			tmpPath = filepath.Join(filepath.Dir(destPath), "fetching", filepath.Base(destPath))
-		} else {
-			tmpPath = filepath.Join(filepath.Dir(filepath.Dir(destPath)), "tmp", fmt.Sprintf("%s.%v.%s", filepath.Base(destPath), time.Now().UnixNano(), fileType.String()))
-		}
-
-		log.Infof("octopus: copying sector %s -> %s ...", srcPath, tmpPath)
-		if err := copy2(srcPath, tmpPath); err != nil {
-			return xerrors.Errorf("copying sector %s -> %s: %w", srcPath, tmpPath, err)
-		}
-
-		time.Sleep(10 * time.Second)
-		// check stat
-		copySuccess := false
-		retries := 5
-		for i := 1; i <= retries; i++ {
-			var tmpSizeInfo int64 = 0
-			fi, err := os.Lstat(tmpPath)
-			if err == nil {
-				if fi.IsDir() {
-					log.Debugf("octopus: %s is a dir", tmpPath)
-					fis, err := ioutil.ReadDir(srcPath)
-					if err == nil {
-						for _, fi := range fis {
-							fii, err := os.Lstat(filepath.Join(tmpPath, fi.Name()))
-							log.Debugf("octopus: lstat %s", filepath.Join(tmpPath, fi.Name()))
-							if err == nil {
-								stat, ok := fii.Sys().(*syscall.Stat_t)
-								if !ok {
-									err = xerrors.New("FileInfo.Sys of wrong type")
-									break
-								} else {
-									log.Debugf("octopus: %s size=%d", filepath.Join(tmpPath, fi.Name()), stat.Size)
-									tmpSizeInfo += stat.Size
-								}
-							} else {
-								break
-							}
-						}
-						log.Debugf("octopus: %s dir size=%d", tmpPath, tmpSizeInfo)
-					}
-				} else {
-					stat, ok := fi.Sys().(*syscall.Stat_t)
-					if !ok {
-						err = xerrors.New("FileInfo.Sys of wrong type")
-					} else {
-						tmpSizeInfo = stat.Size
-					}
-					log.Debugf("octopus: %s is not dir, size=%d", tmpPath, tmpSizeInfo)
-				}
-			}
-			//tmpSizeInfo, err := fsutil.FileStatSize(tmpPath)
-			if err != nil {
-				log.Errorf("octopus: filesize %s err: %v, retry in 10 secs", tmpPath, err)
-				time.Sleep(60 * time.Second)
-			} else if srcSizeInfo.OnDisk != tmpSizeInfo {
-				log.Errorf("octopus: filesize wrong: %s size=%d", tmpPath, tmpSizeInfo)
-				time.Sleep(60 * time.Second)
-			} else {
-				copySuccess = true
-				break
-			}
-		}
-
-		if !copySuccess {
-			log.Errorf("octopus: stat fail. removing %s ...", tmpPath)
-			if removeErr := os.RemoveAll(tmpPath); removeErr != nil {
-				log.Errorf("octopus: stat %s fail: remove %s error: %v", tmpPath, tmpPath, removeErr)
-			}
-			return xerrors.Errorf("octopus: after stat check, copy sector %s -> %s fail", srcPath, tmpPath)
-		}
-
-		log.Infof("octopus: moving %s -> %s", tmpPath, destPath)
-		if err := move2(tmpPath, destPath); err != nil {
-			return xerrors.Errorf("move sector %s -> %s: %w", tmpPath, destPath, err)
-		}
-
 		if err := st.index.StorageDropSector(ctx, storiface.ID(storiface.PathByType(srcIds, fileType)), s.ID, fileType); err != nil {
 			return xerrors.Errorf("dropping source sector from index: %w", err)
+		}
+
+		if err := move(storiface.PathByType(src, fileType), storiface.PathByType(dest, fileType)); err != nil {
+			// TODO: attempt some recovery (check if src is still there, re-declare)
+			return xerrors.Errorf("moving sector %v(%d): %w", s, fileType, err)
 		}
 
 		if err := st.index.StorageDeclareSector(ctx, storiface.ID(storiface.PathByType(destIds, fileType)), s.ID, fileType, true); err != nil {
 			return xerrors.Errorf("declare sector %d(t:%d) -> %s: %w", s, fileType, storiface.ID(storiface.PathByType(destIds, fileType)), err)
 		}
-
-		log.Infof("octopus: removing %s ...", srcPath)
-		if err := os.RemoveAll(srcPath); err != nil {
-			log.Warnf("octopus: remove %s failed: %s", srcPath, err)
-		}
 	}
-
-	log.Infof("octopus: MoveStorage done, sector ID: %v. elapse %v.", s.ID.Number, time.Since(tsStart))
 
 	st.reportStorage(ctx) // report space use changes
 

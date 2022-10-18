@@ -10,19 +10,10 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"io"
 	"math/bits"
 	"os"
-	"path"
-	"path/filepath"
 	"runtime"
-	"strconv"
-	"strings"
-	"time"
-
-	"github.com/filecoin-project/lotus/build"
-	util "github.com/ipfs/go-ipfs-util"
 
 	"github.com/filecoin-project/go-state-types/proof"
 
@@ -37,7 +28,6 @@ import (
 	commcid "github.com/filecoin-project/go-fil-commcid"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/specs-storage/storage"
-	"github.com/qiniupd/qiniu-go-sdk/syncdata/operation"
 
 	"github.com/filecoin-project/lotus/extern/sector-storage/fr32"
 	"github.com/filecoin-project/lotus/extern/sector-storage/partialfile"
@@ -177,27 +167,6 @@ func (sb *Sealer) DataCid(ctx context.Context, pieceSize abi.UnpaddedPieceSize, 
 }
 
 func (sb *Sealer) AddPiece(ctx context.Context, sector storage.SectorRef, existingPieceSizes []abi.UnpaddedPieceSize, pieceSize abi.UnpaddedPieceSize, file storage.Data) (abi.PieceInfo, error) {
-	isCCSector := true
-	sp := ctx.Value("isCC")
-	log.Debugf("octopus: p1: context isCC=%v", sp)
-	if p, ok := sp.(bool); ok {
-		if !p {
-			isCCSector = false
-		}
-	}
-	if isCCSector {
-		log.Infof("octopus: add zero piece...")
-		return addZeroPiece(ctx, sector, sb, pieceSize)
-		// I was trying to use original logic under zero piece failure, but there is  cycle import issue.
-		//p, err := addZeroPiece(ctx, sector, sb, pieceSize)
-		//if err == nil {
-		//	return p, nil
-		//} else {
-		//log.Errorf("octopus: add zero piece error: %v", err)
-		//file = sealing.NewNullReader(pieceSize)
-		//}
-	}
-
 	// TODO: allow tuning those:
 	chunk := abi.PaddedPieceSize(4 << 20)
 	parallel := runtime.NumCPU()
@@ -385,55 +354,6 @@ func (sb *Sealer) AddPiece(ctx context.Context, sector storage.SectorRef, existi
 	}, nil
 }
 
-func addZeroPiece(ctx context.Context, sector storage.SectorRef, sb *Sealer, pieceSize abi.UnpaddedPieceSize) (abi.PieceInfo, error) {
-	var err error
-	var stagedPath storiface.SectorPaths
-	var done func()
-
-	defer func() {
-		if done != nil {
-			done()
-		}
-	}()
-
-	stagedPath, done, err = sb.sectors.AcquireSector(ctx, sector, 0, storiface.FTUnsealed, storiface.PathSealing)
-	if err != nil {
-		return abi.PieceInfo{}, xerrors.Errorf("acquire unsealed sector: %w", err)
-	}
-
-	var unsealFileSuffix string
-	var pieceCID cid.Cid
-	if sector.ProofType == abi.RegisteredSealProof_StackedDrg2KiBV1 || sector.ProofType == abi.RegisteredSealProof_StackedDrg2KiBV1_1 {
-		unsealFileSuffix = "StackedDrg2KiBV1"
-		pieceCID, _ = cid.Parse("baga6ea4seaqpy7usqklokfx2vxuynmupslkeutzexe2uqurdg5vhtebhxqmpqmy")
-	} else if sector.ProofType == abi.RegisteredSealProof_StackedDrg32GiBV1 || sector.ProofType == abi.RegisteredSealProof_StackedDrg32GiBV1_1 {
-		unsealFileSuffix = "StackedDrg32GiBV1"
-		pieceCID, _ = cid.Parse("baga6ea4seaqao7s73y24kcutaosvacpdjgfe5pw76ooefnyqw4ynr3d2y6x2mpq")
-	} else if sector.ProofType == abi.RegisteredSealProof_StackedDrg64GiBV1 || sector.ProofType == abi.RegisteredSealProof_StackedDrg64GiBV1_1 {
-		unsealFileSuffix = "StackedDrg64GiBV1"
-		pieceCID, _ = cid.Parse("baga6ea4seaqomqafu276g53zko4k23xzh4h4uecjwicbmvhsuqi7o4bhthhm4aq")
-	} else {
-		return abi.PieceInfo{}, xerrors.Errorf("unsupported unseal file for sector proof type %v", sector.ProofType)
-	}
-
-	if os.Getenv("StackedDrg_cp") == "true" {
-		log.Infof("octopus: cp from: %s to: %s", filepath.Join(os.Getenv("CC_SECTOR_DATA_PATH"), unsealFileSuffix), stagedPath.Unsealed)
-		if _, err = copyFile(filepath.Join(os.Getenv("CC_SECTOR_DATA_PATH"), unsealFileSuffix), stagedPath.Unsealed); err != nil {
-			return abi.PieceInfo{}, xerrors.Errorf("cp error: %w", err)
-		}
-	} else {
-		log.Infof("octopus: symlink from: %s to: %s", filepath.Join(os.Getenv("CC_SECTOR_DATA_PATH"), unsealFileSuffix), stagedPath.Unsealed)
-		if err = os.Symlink(filepath.Join(os.Getenv("CC_SECTOR_DATA_PATH"), unsealFileSuffix), stagedPath.Unsealed); err != nil {
-			return abi.PieceInfo{}, xerrors.Errorf("make symlink error: %w", err)
-		}
-	}
-
-	return abi.PieceInfo{
-		Size:     pieceSize.Padded(),
-		PieceCID: pieceCID,
-	}, nil
-}
-
 func (sb *Sealer) pieceCid(spt abi.RegisteredSealProof, in []byte) (cid.Cid, error) {
 	prf, werr, err := commpffi.ToReadableFile(bytes.NewReader(in), int64(len(in)))
 	if err != nil {
@@ -480,29 +400,15 @@ func (sb *Sealer) UnsealPiece(ctx context.Context, sector storage.SectorRef, off
 
 	switch {
 	case xerrors.Is(err, storiface.ErrSectorNotFound):
-		unsealedPath, done, err = sb.sectors.AcquireSector(ctx, sector, storiface.FTNone, storiface.FTUnsealed, storiface.PathSealing)
+		unsealedPath, done, err = sb.sectors.AcquireSector(ctx, sector, storiface.FTNone, storiface.FTUnsealed, storiface.PathStorage)
 		if err != nil {
 			return xerrors.Errorf("acquire unsealed sector path (allocate): %w", err)
 		}
 		defer done()
 
-		if os.Getenv("QINIU_UNSEAL_STORE") != "" && IsQiniuFileExists(unsealedPath.Unsealed) {
-			log.Info("download unseal from cloud", unsealedPath.Unsealed)
-			d := operation.NewDownloaderV2()
-			_, err = d.DownloadFile(unsealedPath.Unsealed, unsealedPath.Unsealed)
-			if err != nil {
-				return xerrors.Errorf("download unsealed file: %w", err)
-			}
-			pf, err = partialfile.OpenPartialFile(maxPieceSize, unsealedPath.Unsealed)
-			if err != nil {
-				return xerrors.Errorf("opening download partial file: %w", err)
-			}
-			return nil
-		} else {
-			pf, err = partialfile.CreatePartialFile(maxPieceSize, unsealedPath.Unsealed)
-			if err != nil {
-				return xerrors.Errorf("create unsealed file: %w", err)
-			}
+		pf, err = partialfile.CreatePartialFile(maxPieceSize, unsealedPath.Unsealed)
+		if err != nil {
+			return xerrors.Errorf("create unsealed file: %w", err)
 		}
 
 	case err == nil:
@@ -546,18 +452,8 @@ func (sb *Sealer) UnsealPiece(ctx context.Context, sector storage.SectorRef, off
 		return xerrors.Errorf("acquire sealed sector paths: %w", err)
 	}
 	defer srcDone()
-	var sealed *os.File
 
-	if os.Getenv("QINIU") != "" && !util.FileExists(srcPaths.Sealed) {
-		d := operation.NewDownloaderV2()
-		name := strings.ReplaceAll(srcPaths.Sealed, "/", "_")
-		tempPath := os.Getenv("QINIU_SEALED_TEMP")
-		p := path.Join(tempPath, name)
-		sealed, err = d.DownloadFile(srcPaths.Sealed, p)
-	} else {
-		sealed, err = os.OpenFile(srcPaths.Sealed, os.O_RDONLY, 0644) // nolint:gosec
-	}
-
+	sealed, err := os.OpenFile(srcPaths.Sealed, os.O_RDONLY, 0644) // nolint:gosec
 	if err != nil {
 		return xerrors.Errorf("opening sealed file: %w", err)
 	}
@@ -668,11 +564,6 @@ func (sb *Sealer) UnsealPiece(ctx context.Context, sector storage.SectorRef, off
 }
 
 func (sb *Sealer) ReadPiece(ctx context.Context, writer io.Writer, sector storage.SectorRef, offset storiface.UnpaddedByteIndex, size abi.UnpaddedPieceSize) (bool, error) {
-	up := os.Getenv("QINIU")
-	if up != "" {
-		return sb.ReadPieceQiniu(ctx, writer, sector, offset, size)
-	}
-
 	path, done, err := sb.sectors.AcquireSector(ctx, sector, storiface.FTUnsealed, storiface.FTNone, storiface.PathStorage)
 	if err != nil {
 		return false, xerrors.Errorf("acquire unsealed sector path: %w", err)
@@ -772,43 +663,7 @@ func (sb *Sealer) SealPreCommit1(ctx context.Context, sector storage.SectorRef, 
 		return nil, xerrors.Errorf("aggregated piece sizes don't match sector size: %d != %d (%d)", sum, ussize, int64(ussize-sum))
 	}
 
-	isCCSector := true
-	sp := ctx.Value("isCC")
-	log.Debugf("octopus: p1: context isCC=%v", sp)
-	if p, ok := sp.(bool); ok {
-		if !p {
-			isCCSector = false
-		}
-	}
-
-	if isCCSector {
-		var prefix string
-		if sector.ProofType == abi.RegisteredSealProof_StackedDrg2KiBV1 || sector.ProofType == abi.RegisteredSealProof_StackedDrg2KiBV1_1 {
-			prefix = "StackedDrg2KiBV1"
-		} else if sector.ProofType == abi.RegisteredSealProof_StackedDrg32GiBV1 || sector.ProofType == abi.RegisteredSealProof_StackedDrg32GiBV1_1 {
-			prefix = "StackedDrg32GiBV1"
-		} else if sector.ProofType == abi.RegisteredSealProof_StackedDrg64GiBV1 || sector.ProofType == abi.RegisteredSealProof_StackedDrg64GiBV1_1 {
-			prefix = "StackedDrg64GiBV1"
-		} else {
-			return nil, xerrors.Errorf("unsupported unseal file for sector proof type %v", sector.ProofType)
-		}
-
-		if os.Getenv("StackedDrg_cp") == "true" {
-			log.Infof("octopus: cp from: %s to: %s", filepath.Join(paths.Cache, "sc-02-data-tree-d.dat"), filepath.Join(os.Getenv("CC_SECTOR_DATA_PATH"), prefix+"-data-tree-d.dat"))
-			if _, err = copyFile(filepath.Join(os.Getenv("CC_SECTOR_DATA_PATH"), prefix+"-data-tree-d.dat"), filepath.Join(paths.Cache, "sc-02-data-tree-d.dat")); err != nil {
-				return nil, xerrors.Errorf("cp error: %w", err)
-			}
-		} else {
-			log.Infof("octopus: symlink from: %s to: %s", filepath.Join(paths.Cache, "sc-02-data-tree-d.dat"), filepath.Join(os.Getenv("CC_SECTOR_DATA_PATH"), prefix+"-data-tree-d.dat"))
-			if err = os.Symlink(filepath.Join(os.Getenv("CC_SECTOR_DATA_PATH"), prefix+"-data-tree-d.dat"), filepath.Join(paths.Cache, "sc-02-data-tree-d.dat")); err != nil {
-				return nil, xerrors.Errorf("make symlink error: %w", err)
-			}
-		}
-	}
-
 	// TODO: context cancellation respect
-
-	tsStart := build.Clock.Now()
 	p1o, err := ffi.SealPreCommitPhase1(
 		sector.ProofType,
 		paths.Cache,
@@ -819,9 +674,6 @@ func (sb *Sealer) SealPreCommit1(ctx context.Context, sector storage.SectorRef, 
 		ticket,
 		pieces,
 	)
-	elapsed := time.Since(tsStart)
-	log.Infof("octopus: seal task: sector %v: p1 elapse: %v", sector.ID.Number, elapsed)
-
 	if err != nil {
 		return nil, xerrors.Errorf("presealing sector %d (%s): %w", sector.ID.Number, paths.Unsealed, err)
 	}
@@ -836,137 +688,23 @@ func (sb *Sealer) SealPreCommit1(ctx context.Context, sector storage.SectorRef, 
 	return json.Marshal(&p1odec)
 }
 
-func copyFile(src, dst string) (int64, error) {
-	sourceFileStat, err := os.Stat(src)
-	if err != nil {
-		return 0, err
-	}
-
-	if !sourceFileStat.Mode().IsRegular() {
-		return 0, fmt.Errorf("%s is not a regular file", src)
-	}
-
-	source, err := os.Open(src)
-	if err != nil {
-		return 0, err
-	}
-	defer source.Close()
-
-	destination, err := os.Create(dst)
-	if err != nil {
-		return 0, err
-	}
-
-	defer destination.Close()
-	nBytes, err := io.Copy(destination, source)
-	return nBytes, err
-}
-
-func prepareSealPreCommit2(paths storiface.SectorPaths, ssize abi.SectorSize) error {
-	log.Infof("octopus: prepareSealPreCommit2...")
-	// !!!only valid for zero packing data.
-	fi, err := os.Lstat(paths.Sealed)
-	if err != nil {
-		return xerrors.Errorf("ensuring sealed file exists: %w", err)
-	}
-
-	// symbolic link in canada environment, no need to check sealed file, p2 rust will remove it at the beginning.
-	if fi.Mode()&os.ModeSymlink != 0 {
-		log.Debugf("octopus: %s is symlink. no need to check.", paths.Sealed)
-		return nil
-	}
-
-	sealedFile, err := os.OpenFile(paths.Sealed, os.O_RDWR|os.O_CREATE, 0644) // nolint:gosec
-	if err != nil {
-		return xerrors.Errorf("ensuring sealed file %s exists: %w", paths.Sealed, err)
-	}
-	defer sealedFile.Close()
-
-	bytesToCheck := 8
-	sealBuf := make([]byte, bytesToCheck)
-	sealBytesRead, err := sealedFile.Read(sealBuf)
-	if err != nil {
-		return xerrors.Errorf("octopus: sealed file: %s: first n bytes read err: %w", paths.Sealed, err)
-	}
-
-	unsealedFile, err := os.Open(paths.Unsealed)
-	if err != nil {
-		return xerrors.Errorf("open %s error: %w", paths.Unsealed, err)
-	}
-	defer unsealedFile.Close()
-
-	if sealBytesRead != bytesToCheck {
-		log.Debugf("octopus: %s: bytes read %d expected %d. copy from unsealed directly.", paths.Sealed, sealBytesRead, bytesToCheck)
-		// if there is no bytesToCheck bytes read, copy from unsealed directly.
-		return prepareSealFile(paths, sealedFile, unsealedFile, ssize)
-	} else {
-		unsealBuf := make([]byte, bytesToCheck)
-		unsealBytesRead, err := unsealedFile.Read(unsealBuf)
-		if err != nil {
-			return xerrors.Errorf("octopus: unsealed file: %s: first n bytes read err: %w", paths.Unsealed, err)
-		}
-		if unsealBytesRead != bytesToCheck {
-			return xerrors.Errorf("octopus: unsealed file's first n bytes read err: expected %d, actual %d", bytesToCheck, unsealBytesRead)
-		}
-
-		isDiff := false
-		for i := 0; i < bytesToCheck; i++ {
-			if sealBuf[i] != unsealBuf[i] {
-				isDiff = true
-				break
-			}
-		}
-
-		if isDiff {
-			log.Debugf("octopus: first %d bytes of %s and %s are different. will copy.", bytesToCheck, paths.Unsealed, paths.Sealed)
-			return prepareSealFile(paths, sealedFile, unsealedFile, ssize)
-		} else {
-			log.Debugf("octopus: %s and %s are the same.", paths.Unsealed, paths.Sealed)
-		}
-	}
-
-	return nil
-}
-
-func prepareSealFile(paths storiface.SectorPaths, sealedFile *os.File, unsealedFile *os.File, ssize abi.SectorSize) error {
-	tsStart := build.Clock.Now()
-	log.Debugf("octopus: copy %s -> %s...", paths.Unsealed, paths.Sealed)
-	_, err := io.Copy(sealedFile, unsealedFile)
-	if err != nil {
-		return xerrors.Errorf("copy %s to %s error: %w", paths.Unsealed, paths.Sealed, err)
-	}
-	if err = sealedFile.Truncate(int64(ssize)); err != nil {
-		return err
-	}
-	elapsed := time.Since(tsStart)
-	log.Debugf("octopus: copy %s -> %s elapse: %v", paths.Unsealed, paths.Sealed, elapsed)
-	return nil
-}
-
-var PC2CheckRounds = 5
+var PC2CheckRounds = 3
 
 func (sb *Sealer) SealPreCommit2(ctx context.Context, sector storage.SectorRef, phase1Out storage.PreCommit1Out) (storage.SectorCids, error) {
-	paths, done, err := sb.sectors.AcquireSector(context.WithValue(ctx, "pathTypeForExisting", true), sector, storiface.FTSealed|storiface.FTCache|storiface.FTUnsealed, 0, storiface.PathSealing)
+	paths, done, err := sb.sectors.AcquireSector(ctx, sector, storiface.FTSealed|storiface.FTCache, 0, storiface.PathSealing)
 	if err != nil {
 		return storage.SectorCids{}, xerrors.Errorf("acquiring sector paths: %w", err)
 	}
 	defer done()
 
-	ssize, err := sector.ProofType.SectorSize()
-	if err != nil {
-		return storage.SectorCids{}, err
-	}
-
-	if err = prepareSealPreCommit2(paths, ssize); err != nil {
-		return storage.SectorCids{}, xerrors.Errorf("check and prepare sealed file %s: %w", paths.Sealed, err)
-	}
-
-	tsStart := build.Clock.Now()
 	sealedCID, unsealedCID, err := ffi.SealPreCommitPhase2(phase1Out, paths.Cache, paths.Sealed)
-	elapsed := time.Since(tsStart)
-	log.Infof("octopus: seal task: sector %v: p2 elapse: %v", sector.ID.Number, elapsed)
 	if err != nil {
 		return storage.SectorCids{}, xerrors.Errorf("presealing sector %d (%s): %w", sector.ID.Number, paths.Unsealed, err)
+	}
+
+	ssize, err := sector.ProofType.SectorSize()
+	if err != nil {
+		return storage.SectorCids{}, xerrors.Errorf("get ssize: %w", err)
 	}
 
 	p1odec := map[string]interface{}{}
@@ -983,10 +721,6 @@ func (sb *Sealer) SealPreCommit2(ctx context.Context, sector storage.SectorRef, 
 			return storage.SectorCids{}, xerrors.Errorf("decoding ticket: %w", err)
 		}
 
-		p2CheckRoundsStr := os.Getenv("P2_CHECK_ROUNDS")
-		if p2CheckRoundsStr != "" {
-			PC2CheckRounds, _ = strconv.Atoi(p2CheckRoundsStr)
-		}
 		for i := 0; i < PC2CheckRounds; i++ {
 			var sd [32]byte
 			_, _ = rand.Read(sd[:])
@@ -1007,7 +741,7 @@ func (sb *Sealer) SealPreCommit2(ctx context.Context, sector storage.SectorRef, 
 				log.Warn("checking PreCommit failed: ", err)
 				log.Warnf("num:%d tkt:%v seed:%v sealedCID:%v, unsealedCID:%v", sector.ID.Number, ticket, sd[:], sealedCID, unsealedCID)
 
-				return storage.SectorCids{}, xerrors.Errorf("check rounds: checking PreCommit failed: %w", err)
+				return storage.SectorCids{}, xerrors.Errorf("checking PreCommit failed: %w", err)
 			}
 		}
 	}
@@ -1019,12 +753,11 @@ func (sb *Sealer) SealPreCommit2(ctx context.Context, sector storage.SectorRef, 
 }
 
 func (sb *Sealer) SealCommit1(ctx context.Context, sector storage.SectorRef, ticket abi.SealRandomness, seed abi.InteractiveSealRandomness, pieces []abi.PieceInfo, cids storage.SectorCids) (storage.Commit1Out, error) {
-	paths, done, err := sb.sectors.AcquireSector(context.WithValue(ctx, "pathTypeForExisting", true), sector, storiface.FTSealed|storiface.FTCache, 0, storiface.PathSealing)
+	paths, done, err := sb.sectors.AcquireSector(ctx, sector, storiface.FTSealed|storiface.FTCache, 0, storiface.PathSealing)
 	if err != nil {
 		return nil, xerrors.Errorf("acquire sector paths: %w", err)
 	}
 	defer done()
-	tsStart := build.Clock.Now()
 	output, err := ffi.SealCommitPhase1(
 		sector.ProofType,
 		cids.Sealed,
@@ -1037,8 +770,6 @@ func (sb *Sealer) SealCommit1(ctx context.Context, sector storage.SectorRef, tic
 		seed,
 		pieces,
 	)
-	elapsed := time.Since(tsStart)
-	log.Infof("octopus: seal task: sector %v: c1 elapse: %v", sector.ID.Number, elapsed)
 	if err != nil {
 		log.Warn("StandaloneSealCommit error: ", err)
 		log.Warnf("num:%d tkt:%v seed:%v, pi:%v sealedCID:%v, unsealedCID:%v", sector.ID.Number, ticket, seed, pieces, cids.Sealed, cids.Unsealed)
@@ -1049,11 +780,7 @@ func (sb *Sealer) SealCommit1(ctx context.Context, sector storage.SectorRef, tic
 }
 
 func (sb *Sealer) SealCommit2(ctx context.Context, sector storage.SectorRef, phase1Out storage.Commit1Out) (storage.Proof, error) {
-	tsStart := build.Clock.Now()
-	f, err := ffi.SealCommitPhase2(phase1Out, sector.ID.Number, sector.ID.Miner)
-	elapsed := time.Since(tsStart)
-	log.Infof("octopus: seal task: sector %v: c2 elapse: %v", sector.ID.Number, elapsed)
-	return f, err
+	return ffi.SealCommitPhase2(phase1Out, sector.ID.Number, sector.ID.Miner)
 }
 
 func (sb *Sealer) ReplicaUpdate(ctx context.Context, sector storage.SectorRef, pieces []abi.PieceInfo) (storage.ReplicaUpdateOut, error) {
@@ -1183,9 +910,9 @@ func (sb *Sealer) freeUnsealed(ctx context.Context, sector storage.SectorRef, ke
 			}
 		}
 
-		paths, done, err := sb.sectors.AcquireSector(ctx, sector, storiface.FTUnsealed, 0, storiface.PathSealing)
+		paths, done, err := sb.sectors.AcquireSector(ctx, sector, storiface.FTUnsealed, 0, storiface.PathStorage)
 		if err != nil {
-			return xerrors.Errorf("acquiring sector unsealed path: %w", err)
+			return xerrors.Errorf("acquiring sector cache path: %w", err)
 		}
 		defer done()
 
@@ -1207,10 +934,8 @@ func (sb *Sealer) freeUnsealed(ctx context.Context, sector storage.SectorRef, ke
 
 				err = pf.Free(storiface.PaddedByteIndex(abi.UnpaddedPieceSize(offset).Padded()), abi.UnpaddedPieceSize(r.Len).Padded())
 				if err != nil {
-					//_ = pf.Close()
-					//return xerrors.Errorf("free partial file range: %w", err)
-					log.Errorf("free partial file range: %v", err)
-					break
+					_ = pf.Close()
+					return xerrors.Errorf("free partial file range: %w", err)
 				}
 			}
 
@@ -1244,80 +969,7 @@ func (sb *Sealer) FinalizeSector(ctx context.Context, sector storage.SectorRef, 
 	}
 	defer done()
 
-	if QiniuFeatureEnabled(QiniuFeatureFinalizeUpload) && QiniuFeatureEnabled(QiniuFeatureSingleSectorPath) {
-		if err = sb.qiniuFinalizeSector(ctx, sector, keepUnsealed, paths); err != nil {
-			return err
-		}
-	}
-
-	if QiniuFeatureEnabled(QiniuFeatureFinalizeUpload) && QiniuFeatureEnabled(QiniuFeatureFinalizeUploadAutoClean) {
-		//注意，这里是直接return
-		return sb.qiniuClearFile(ctx, sector, keepUnsealed, paths)
-	}
-
 	return ffi.ClearCache(uint64(ssize), paths.Cache)
-}
-
-func (sb *Sealer) qiniuClearFile(ctx context.Context, sector storage.SectorRef, keepUnsealed []storage.Range, paths storiface.SectorPaths) error {
-	uploadUnseal := len(keepUnsealed) > 0
-	pathNew := storiface.SectorPaths{
-		ID:    sector.ID,
-		Cache: paths.Cache,
-	}
-
-	sealPath, done1, err := sb.sectors.AcquireSector(ctx, sector, storiface.FTSealed, 0, storiface.PathStorage)
-	if err != nil {
-		return xerrors.Errorf("acquiring sector seal path: %w", err)
-	} else {
-		pathNew.Sealed = sealPath.Sealed
-	}
-	defer done1()
-
-	if uploadUnseal {
-		unsealPath, done2, err := sb.sectors.AcquireSector(ctx, sector, storiface.FTUnsealed, 0, storiface.PathStorage)
-		if err != nil {
-			return xerrors.Errorf("acquiring sector unseal path: %w", err)
-		} else {
-			pathNew.Unsealed = unsealPath.Unsealed
-		}
-		defer done2()
-	}
-
-	return qiniuCleanSeal(pathNew, uploadUnseal)
-
-}
-
-func (sb *Sealer) qiniuFinalizeSector(ctx context.Context, sector storage.SectorRef, keepUnsealed []storage.Range, paths storiface.SectorPaths) error {
-	// 此处用于FinalizeSector阶段上传，必须指定一个绝对路径作为上传路径
-	// 如果打开自动开关，则我们修改调度逻辑，在此处清理本地文件，并且后续不再触发MoveStorage操作
-	// 例如：QINIU=/root/cfg.toml QINIU_FINALIZE_UPLOAD=true QINIU_STORE_PATH=/ceph ./lotus-worker
-	pathNew := storiface.SectorPaths{
-		ID:    sector.ID,
-		Cache: paths.Cache,
-	}
-	uploadUnseal := len(keepUnsealed) > 0
-
-	sealPath, done1, err := sb.sectors.AcquireSector(ctx, sector, storiface.FTSealed, 0, storiface.PathStorage)
-	if err != nil {
-		return xerrors.Errorf("acquiring sector seal path: %w", err)
-	} else {
-		pathNew.Sealed = sealPath.Sealed
-	}
-	defer done1()
-
-	if uploadUnseal {
-		unsealPath, done2, err := sb.sectors.AcquireSector(ctx, sector, storiface.FTUnsealed, 0, storiface.PathStorage)
-		if err != nil {
-			return xerrors.Errorf("acquiring sector unseal path: %w", err)
-		} else {
-			pathNew.Unsealed = unsealPath.Unsealed
-		}
-		defer done2()
-	}
-
-	log.Debugf("QINIU DEBUG path %s", pathNew)
-
-	return SubmitFixedPathSector(pathNew, sector.ID, uploadUnseal)
 }
 
 func (sb *Sealer) FinalizeReplicaUpdate(ctx context.Context, sector storage.SectorRef, keepUnsealed []storage.Range) error {

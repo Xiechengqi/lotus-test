@@ -2,7 +2,6 @@ package exchange
 
 import (
 	"context"
-	"github.com/filecoin-project/lotus/api"
 
 	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
@@ -48,7 +47,4 @@ type Client interface {
 	// RemovePeer removes a peer from the pool of peers that the Client
 	// requests data from.
 	RemovePeer(peer peer.ID)
-
-	// octopus: BAD DESIGN for test.
-	GetPeersCost() []api.ExchangeClientCost
 }

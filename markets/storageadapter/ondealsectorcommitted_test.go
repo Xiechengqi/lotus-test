@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	cid "github.com/ipfs/go-cid/_rsrch/cidiface"
 	"math/rand"
 	"testing"
 	"time"
@@ -21,6 +20,7 @@ import (
 
 	blocks "github.com/ipfs/go-block-format"
 
+	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/cbor"
 	"github.com/filecoin-project/lotus/api"
@@ -30,6 +30,7 @@ import (
 	test "github.com/filecoin-project/lotus/chain/events/state/mock"
 	"github.com/filecoin-project/lotus/chain/types"
 	tutils "github.com/filecoin-project/specs-actors/v2/support/testing"
+	"github.com/ipfs/go-cid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -236,7 +237,7 @@ func TestOnDealSectorPreCommitted(t *testing.T) {
 			}
 			scm := newSectorCommittedManager(eventsAPI, mockDIAPI, mockPCAPI)
 			//stm: @MARKET_ADAPTER_ON_SECTOR_PRE_COMMIT_001
-			err = scm.OnDealSectorPreCommitted(ctx, provider, proposal, publishCid, abi.ChainEpoch(0), cb)
+			err = scm.OnDealSectorPreCommitted(ctx, provider, proposal, publishCid, cb)
 			if data.expectedError == nil {
 				require.NoError(t, err)
 			} else {
@@ -451,7 +452,7 @@ func TestOnDealSectorCommitted(t *testing.T) {
 			}
 			scm := newSectorCommittedManager(eventsAPI, mockDIAPI, mockPCAPI)
 			//stm: @MARKET_ADAPTER_ON_SECTOR_COMMIT_001
-			err = scm.OnDealSectorCommitted(ctx, provider, sectorNumber, proposal, publishCid, abi.ChainEpoch(0), cb)
+			err = scm.OnDealSectorCommitted(ctx, provider, sectorNumber, proposal, publishCid, cb)
 			if data.expectedError == nil {
 				require.NoError(t, err)
 			} else {

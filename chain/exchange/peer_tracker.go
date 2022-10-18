@@ -123,21 +123,6 @@ func (bpt *bsPeerTracker) prefSortedPeers() []peer.ID {
 	return out
 }
 
-func (bpt *bsPeerTracker) peerCost(peerId peer.ID) float64 {
-	bpt.lk.Lock()
-	defer bpt.lk.Unlock()
-	pi := bpt.peers[peerId]
-	if pi.successes+pi.failures > 0 {
-		failRateI := float64(pi.failures) / float64(pi.failures+pi.successes)
-		return float64(pi.averageTime) + failRateI*float64(bpt.avgGlobalTime)
-	} else {
-		getPeerInitLat := func(p peer.ID) float64 {
-			return float64(bpt.avgGlobalTime) * newPeerMul
-		}
-		return getPeerInitLat(peerId)
-	}
-}
-
 const (
 	// xInvAlpha = (N+1)/2
 

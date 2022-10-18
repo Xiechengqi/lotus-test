@@ -302,7 +302,6 @@ func (m *StateModule) StateMinerProvingDeadline(ctx context.Context, addr addres
 		return nil, xerrors.Errorf("failed to get deadline info: %w", err)
 	}
 
-	fmt.Printf("in StateMinerProvingDeadline: di: %v", di)
 	return di.NextNotElapsed(), nil
 }
 

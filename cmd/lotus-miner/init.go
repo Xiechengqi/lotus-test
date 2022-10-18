@@ -7,7 +7,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"github.com/filecoin-project/lotus/octopus"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -126,16 +125,6 @@ var initCmd = &cli.Command{
 			Name:  "from",
 			Usage: "select which address to send actor creation message from",
 		},
-		&cli.StringFlag{
-			Name:  "redis-conn",
-			Usage: "redis connection string. if in cluster mode, separated each one with comma",
-			Value: "localhost:6379",
-		},
-		&cli.StringFlag{
-			Name:  "redis-password",
-			Usage: "redis connection password",
-			Value: "",
-		},
 	},
 	Subcommands: []*cli.Command{
 		restoreCmd,
@@ -178,17 +167,7 @@ var initCmd = &cli.Command{
 		if err != nil {
 			return err
 		}
-		//defer closer()
-
-		fnId := "default_env"
-		addrInfo, err := api.NetAddrsListen(ctx)
-		if err != nil {
-			log.Error("octopus: full node api net listen error: ", err)
-		} else {
-			fnId = addrInfo.String()
-		}
-		pool := octopus.NewFullNodePool(cctx, ctx, fnId, api, closer)
-		defer pool.Close()
+		defer closer()
 
 		log.Info("Checking full node sync status")
 
@@ -224,24 +203,6 @@ var initCmd = &cli.Command{
 		if !v.APIVersion.EqMajorMinor(lapi.FullAPIVersion1) {
 			return xerrors.Errorf("Remote API version didn't match (expected %s, remote %s)", lapi.FullAPIVersion1, v.APIVersion)
 		}
-
-		//redisConn := cctx.String("redis-conn")
-		//if redisConn == "" {
-		//	log.Errorf("redis conn must be set")
-		//	return nil
-		//}
-		//os.Setenv("REDIS_CONN", redisConn)
-		if os.Getenv("REDIS_CONN") == "" {
-			log.Errorf("env REDIS_CONN must be set.")
-			return nil
-		}
-
-		//redisPassword := cctx.String("redis-password")
-		//os.Setenv("REDIS_PASSWORD", redisPassword)
-		//if os.Getenv("REDIS_PASSWORD") == "" {
-		//	log.Errorf("env REDIS_PASSWORD must be set.")
-		//	return nil
-		//}
 
 		log.Info("Initializing repo")
 
@@ -301,8 +262,8 @@ var initCmd = &cli.Command{
 				return err
 			}
 		}
-		// TODO: api should be removed, but it's working for init.
-		if err := storageMinerInit(ctx, cctx, api, pool, r, ssize, gasPrice); err != nil {
+
+		if err := storageMinerInit(ctx, cctx, api, r, ssize, gasPrice); err != nil {
 			log.Errorf("Failed to initialize lotus-miner: %+v", err)
 			path, err := homedir.Expand(repoPath)
 			if err != nil {
@@ -451,7 +412,7 @@ func findMarketDealID(ctx context.Context, api v1api.FullNode, deal market8.Deal
 	return 0, xerrors.New("deal not found")
 }
 
-func storageMinerInit(ctx context.Context, cctx *cli.Context, api v1api.FullNode, apis *octopus.FullNodePool, r repo.Repo, ssize abi.SectorSize, gasPrice types.BigInt) error {
+func storageMinerInit(ctx context.Context, cctx *cli.Context, api v1api.FullNode, r repo.Repo, ssize abi.SectorSize, gasPrice types.BigInt) error {
 	lr, err := r.Lock(repo.StorageMiner)
 	if err != nil {
 		return err
@@ -500,7 +461,8 @@ func storageMinerInit(ctx context.Context, cctx *cli.Context, api v1api.FullNode
 			wsts := statestore.New(namespace.Wrap(mds, modules.WorkerCallsPrefix))
 			smsts := statestore.New(namespace.Wrap(mds, modules.ManagerWorkPrefix))
 
-			si := stores.NewRedisIndex(dtypes.MinerID(mid), modules.RedisClient())
+			si := stores.NewIndex()
+
 			lstor, err := stores.NewLocal(ctx, lr, si, nil)
 			if err != nil {
 				return err
@@ -531,7 +493,7 @@ func storageMinerInit(ctx context.Context, cctx *cli.Context, api v1api.FullNode
 				return fmt.Errorf("failed to open filesystem journal: %w", err)
 			}
 
-			m := storageminer.NewMiner(apis, epp, a, slashfilter.New(mds), j)
+			m := storageminer.NewMiner(api, epp, a, slashfilter.New(mds), j)
 			{
 				if err := m.Start(ctx); err != nil {
 					return xerrors.Errorf("failed to start up genesis miner: %w", err)

@@ -16,7 +16,7 @@ import (
 )
 
 func (m *Miner) winPoStWarmup(ctx context.Context) error {
-	deadlines, err := m.apis.StateMinerDeadlines(ctx, m.address, types.EmptyTSK)
+	deadlines, err := m.api.StateMinerDeadlines(ctx, m.address, types.EmptyTSK)
 	if err != nil {
 		return xerrors.Errorf("getting deadlines: %w", err)
 	}
@@ -25,7 +25,7 @@ func (m *Miner) winPoStWarmup(ctx context.Context) error {
 
 out:
 	for dlIdx := range deadlines {
-		partitions, err := m.apis.StateMinerPartitions(ctx, m.address, uint64(dlIdx), types.EmptyTSK)
+		partitions, err := m.api.StateMinerPartitions(ctx, m.address, uint64(dlIdx), types.EmptyTSK)
 		if err != nil {
 			return xerrors.Errorf("getting partitions for deadline %d: %w", dlIdx, err)
 		}
@@ -55,16 +55,16 @@ out:
 	var r abi.PoStRandomness = make([]byte, abi.RandomnessLength)
 	_, _ = rand.Read(r)
 
-	si, err := m.apis.StateSectorGetInfo(ctx, m.address, sector, types.EmptyTSK)
+	si, err := m.api.StateSectorGetInfo(ctx, m.address, sector, types.EmptyTSK)
 	if err != nil {
 		return xerrors.Errorf("getting sector info: %w", err)
 	}
 
-	ts, err := m.apis.ChainHead(ctx)
+	ts, err := m.api.ChainHead(ctx)
 	if err != nil {
 		return xerrors.Errorf("getting chain head")
 	}
-	nv, err := m.apis.StateNetworkVersion(ctx, ts.Key())
+	nv, err := m.api.StateNetworkVersion(ctx, ts.Key())
 	if err != nil {
 		return xerrors.Errorf("getting network version")
 	}

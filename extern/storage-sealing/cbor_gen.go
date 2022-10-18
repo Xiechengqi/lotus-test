@@ -152,7 +152,7 @@ func (t *SectorInfo) MarshalCBOR(w io.Writer) error {
 
 	cw := cbg.NewCborWriter(w)
 
-	if _, err := cw.Write([]byte{184, 34}); err != nil {
+	if _, err := cw.Write([]byte{184, 32}); err != nil {
 		return err
 	}
 
@@ -847,39 +847,6 @@ func (t *SectorInfo) MarshalCBOR(w io.Writer) error {
 			return err
 		}
 	}
-
-	// t.FinalizedTimes (uint64) (uint64)
-	if len("FinalizedTimes") > cbg.MaxLength {
-		return xerrors.Errorf("Value in field \"FinalizedTimes\" was too long")
-	}
-
-	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("FinalizedTimes"))); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(w, string("FinalizedTimes")); err != nil {
-		return err
-	}
-
-	if err := cw.WriteMajorTypeHeader(cbg.MajUnsignedInt, uint64(t.FinalizedTimes)); err != nil {
-		return err
-	}
-
-	// t.Recovering (bool) (bool)
-	if len("Recovering") > cbg.MaxLength {
-		return xerrors.Errorf("Value in field \"Recovering\" was too long")
-	}
-
-	if err := cw.WriteMajorTypeHeader(cbg.MajTextString, uint64(len("Recovering"))); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(w, string("Recovering")); err != nil {
-		return err
-	}
-
-	if err := cbg.WriteBool(w, t.Recovering); err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -1604,40 +1571,6 @@ func (t *SectorInfo) UnmarshalCBOR(r io.Reader) (err error) {
 				}
 
 				t.Log[i] = v
-			}
-			// t.FinalizedTimes (uint64) (uint64)
-		case "FinalizedTimes":
-
-			{
-
-				maj, extra, err = cr.ReadHeader()
-				if err != nil {
-					return err
-				}
-				if maj != cbg.MajUnsignedInt {
-					return fmt.Errorf("wrong type for uint64 field")
-				}
-				t.FinalizedTimes = uint64(extra)
-
-			}
-
-			// t.Recovering (bool) (bool)
-		case "Recovering":
-
-			maj, extra, err = cr.ReadHeader()
-			if err != nil {
-				return err
-			}
-			if maj != cbg.MajOther {
-				return fmt.Errorf("booleans must be major type 7")
-			}
-			switch extra {
-			case 20:
-				t.Recovering = false
-			case 21:
-				t.Recovering = true
-			default:
-				return fmt.Errorf("booleans are either major type 7, value 20 or 21 (got %d)", extra)
 			}
 
 		default:

@@ -19,20 +19,6 @@ import (
 
 //go:generate go run github.com/golang/mock/mockgen -destination=mocks/statemachine.go -package=mocks . Context
 
-// octopus:
-type APInfo struct {
-	DealID abi.DealID
-	P      abi.SectorNumber
-	Offset abi.PaddedPieceSize
-	Status string
-	Reason string
-}
-
-type DealInfo struct {
-	Miner        abi.ActorID
-	SectorNumber abi.SectorNumber
-}
-
 // Context is a go-statemachine context
 type Context interface {
 	Context() context.Context
@@ -105,9 +91,6 @@ type SectorInfo struct {
 	CommitMessage *cid.Cid
 	InvalidProofs uint64 // failed proof computations (doesn't validate with proof inputs; can't compute)
 
-	// finalized times. after FinalizeSector event, will reset to zero.
-	FinalizedTimes uint64
-
 	// CCUpdate
 	CCUpdate             bool
 	CCPieces             []Piece
@@ -130,9 +113,6 @@ type SectorInfo struct {
 	LastErr string
 
 	Log []Log
-
-	// in recovering period.
-	Recovering bool
 }
 
 func (t *SectorInfo) pieceInfos() []abi.PieceInfo {
@@ -176,15 +156,8 @@ func (t *SectorInfo) sealingCtx(ctx context.Context) context.Context {
 	// TODO: can also take start epoch into account to give priority to sectors
 	//  we need sealed sooner
 
-	priority := DealSectorPriority
-	if t.Recovering {
-		priority = RecoveryingSectorPriority
-	}
 	if t.hasDeals() {
-		return context.WithValue(sectorstorage.WithPriority(ctx, priority), "isCC", false)
-	}
-	if t.Recovering {
-		return sectorstorage.WithPriority(ctx, priority)
+		return sectorstorage.WithPriority(ctx, DealSectorPriority)
 	}
 
 	return ctx

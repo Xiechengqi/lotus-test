@@ -107,7 +107,6 @@ type MinerSubsystemConfig struct {
 
 	SealerApiInfo      string // if EnableSealing == false
 	SectorIndexApiInfo string // if EnableSectorStorage == false
-	SectorIndexApiInfos []string // if EnableSectorStorage == false
 }
 
 type DealmakingConfig struct {

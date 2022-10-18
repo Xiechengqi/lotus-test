@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/filecoin-project/lotus/octopus"
 	"net/http"
 	"os"
 	"sort"
@@ -69,8 +68,7 @@ type StorageMinerAPI struct {
 
 	EnabledSubsystems api.MinerSubsystems
 
-	//Full        api.FullNode
-	Full        *octopus.FullNodePool
+	Full        api.FullNode
 	LocalStore  *stores.Local
 	RemoteStore *stores.Remote
 
@@ -145,14 +143,6 @@ func (sm *StorageMinerAPI) WorkerJobs(ctx context.Context) (map[uuid.UUID][]stor
 	return sm.StorageMgr.WorkerJobs(), nil
 }
 
-func (sm *StorageMinerAPI) WorkerSetAbility(ctx context.Context, workerId uuid.UUID, ability string) error {
-	return sm.StorageMgr.SetWorkerAbility(ctx, workerId, ability)
-}
-
-func (sm *StorageMinerAPI) WorkerGetAbility(ctx context.Context) ([]storiface.WorkerAbility, error) {
-	return sm.StorageMgr.GetWorkerAbility(ctx)
-}
-
 func (sm *StorageMinerAPI) ActorAddress(context.Context) (address.Address, error) {
 	return sm.Miner.Address(), nil
 }
@@ -173,40 +163,6 @@ func (sm *StorageMinerAPI) ActorSectorSize(ctx context.Context, addr address.Add
 	return mi.SectorSize, nil
 }
 
-func (sm *StorageMinerAPI) FindDeal(ctx context.Context, dealId abi.DealID) (string, error) {
-	return sm.Miner.FindDeal(ctx, dealId)
-}
-
-func (sm *StorageMinerAPI) PledgeSectors(ctx context.Context, n int) ([]abi.SectorNumber, error) {
-	var ids []abi.SectorNumber
-	for i := 0; i < n; i++ {
-		sr, err := sm.Miner.PledgeSector(ctx)
-		if err != nil {
-			return ids, err
-		}
-
-		// wait for the sector to enter the Packing state
-		// TODO: instead of polling implement some pubsub-type thing in storagefsm
-		for {
-			info, err := sm.Miner.SectorsStatus(ctx, sr.ID.Number, false)
-			if err != nil {
-				return ids, xerrors.Errorf("getting pledged sector info: %w", err)
-			}
-
-			if info.State != api.SectorState(sealing.UndefinedSectorState) {
-				ids = append(ids, sr.ID.Number)
-				break
-			}
-
-			select {
-			case <-time.After(10 * time.Millisecond):
-			case <-ctx.Done():
-				return ids, ctx.Err()
-			}
-		}
-	}
-	return ids, nil
-}
 func (sm *StorageMinerAPI) PledgeSector(ctx context.Context) (abi.SectorID, error) {
 	sr, err := sm.Miner.PledgeSector(ctx)
 	if err != nil {
@@ -267,8 +223,8 @@ func (sm *StorageMinerAPI) SectorsStatus(ctx context.Context, sid abi.SectorNumb
 	return sInfo, nil
 }
 
-func (sm *StorageMinerAPI) SectorAddPieceToAny(ctx context.Context, size abi.UnpaddedPieceSize, r sto.Data, d api.PieceDealInfo, path string) (api.SectorOffset, error) {
-	so, err := sm.Miner.SectorAddPieceToAny(ctx, size, r, d, path)
+func (sm *StorageMinerAPI) SectorAddPieceToAny(ctx context.Context, size abi.UnpaddedPieceSize, r sto.Data, d api.PieceDealInfo) (api.SectorOffset, error) {
+	so, err := sm.Miner.SectorAddPieceToAny(ctx, size, r, d)
 	if err != nil {
 		// jsonrpc doesn't support returning values with errors, make sure we never do that
 		return api.SectorOffset{}, err
@@ -283,7 +239,7 @@ func (sm *StorageMinerAPI) SectorsUnsealPiece(ctx context.Context, sector sto.Se
 
 // List all staged sectors
 func (sm *StorageMinerAPI) SectorsList(context.Context) ([]abi.SectorNumber, error) {
-	sectors, err := sm.Miner.ListSectors(false)
+	sectors, err := sm.Miner.ListSectors()
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +270,7 @@ func (sm *StorageMinerAPI) SectorsListInStates(ctx context.Context, states []api
 		return sns, nil
 	}
 
-	sectors, err := sm.Miner.ListSectors(true)
+	sectors, err := sm.Miner.ListSectors()
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +284,7 @@ func (sm *StorageMinerAPI) SectorsListInStates(ctx context.Context, states []api
 }
 
 func (sm *StorageMinerAPI) SectorsSummary(ctx context.Context) (map[api.SectorState]int, error) {
-	sectors, err := sm.Miner.ListSectors(false)
+	sectors, err := sm.Miner.ListSectors()
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +298,7 @@ func (sm *StorageMinerAPI) SectorsSummary(ctx context.Context) (map[api.SectorSt
 	return out, nil
 }
 
-func (sm *StorageMinerAPI) StorageLocal(ctx context.Context, onlySeal bool) (map[storiface.ID]string, error) {
+func (sm *StorageMinerAPI) StorageLocal(ctx context.Context) (map[storiface.ID]string, error) {
 	l, err := sm.LocalStore.Local(ctx)
 	if err != nil {
 		return nil, err
@@ -350,20 +306,10 @@ func (sm *StorageMinerAPI) StorageLocal(ctx context.Context, onlySeal bool) (map
 
 	out := map[storiface.ID]string{}
 	for _, st := range l {
-		if !onlySeal || st.CanSeal {
-			out[st.ID] = st.LocalPath
-		}
+		out[st.ID] = st.LocalPath
 	}
 
 	return out, nil
-}
-
-func (sm *StorageMinerAPI) StorageDeclareSectors(ctx context.Context, s []abi.SectorID) (map[abi.SectorNumber][]storiface.SectorFileType, error) {
-	result, err := sm.LocalStore.DeclareSectors(ctx, s)
-	if err != nil {
-		return map[abi.SectorNumber][]storiface.SectorFileType{}, err
-	}
-	return result, nil
 }
 
 func (sm *StorageMinerAPI) SectorsRefs(ctx context.Context) (map[string][]api.SealedRef, error) {
@@ -419,10 +365,6 @@ func (sm *StorageMinerAPI) SectorGetExpectedSealDuration(ctx context.Context) (t
 
 func (sm *StorageMinerAPI) SectorsUpdate(ctx context.Context, id abi.SectorNumber, state api.SectorState) error {
 	return sm.Miner.ForceSectorState(ctx, id, sealing.SectorState(state))
-}
-
-func (sm *StorageMinerAPI) SectorsRecover(ctx context.Context, id abi.SectorNumber) error {
-	return sm.Miner.RecoverSector(ctx, id)
 }
 
 func (sm *StorageMinerAPI) SectorRemove(ctx context.Context, id abi.SectorNumber) error {
@@ -514,7 +456,7 @@ func (sm *StorageMinerAPI) MarketImportDealData(ctx context.Context, propCid cid
 	}
 	defer fi.Close() //nolint:errcheck
 
-	return sm.StorageProvider.ImportDataForDeal(ctx, propCid, fi, path)
+	return sm.StorageProvider.ImportDataForDeal(ctx, propCid, fi)
 }
 
 func (sm *StorageMinerAPI) listDeals(ctx context.Context) ([]*api.MarketDeal, error) {
@@ -1200,15 +1142,13 @@ func (sm *StorageMinerAPI) DealsSetExpectedSealDurationFunc(ctx context.Context,
 }
 
 func (sm *StorageMinerAPI) DealsImportData(ctx context.Context, deal cid.Cid, fname string) error {
-	// check if file exists.
 	fi, err := os.Open(fname)
 	if err != nil {
 		return xerrors.Errorf("failed to open given file: %w", err)
 	}
 	defer fi.Close() //nolint:errcheck
 
-	// pass file name
-	return sm.StorageProvider.ImportDataForDeal(ctx, deal, fi, fname)
+	return sm.StorageProvider.ImportDataForDeal(ctx, deal, fi)
 }
 
 func (sm *StorageMinerAPI) DealsPieceCidBlocklist(ctx context.Context) ([]cid.Cid, error) {
@@ -1256,7 +1196,7 @@ func (sm *StorageMinerAPI) CreateBackup(ctx context.Context, fpath string) error
 	return backup(ctx, sm.DS, fpath)
 }
 
-func (sm *StorageMinerAPI) CheckProvable(ctx context.Context, pp abi.RegisteredPoStProof, sectors []sto.SectorRef, update []bool, expensive bool) (map[abi.SectorNumber]string, error) {
+func (sm *StorageMinerAPI) CheckProvable(ctx context.Context, pp abi.RegisteredPoStProof, sectors []sto.SectorRef, expensive bool) (map[abi.SectorNumber]string, error) {
 	var rg storiface.RGetter
 	if expensive {
 		rg = func(ctx context.Context, id abi.SectorID) (cid.Cid, bool, error) {
@@ -1272,8 +1212,7 @@ func (sm *StorageMinerAPI) CheckProvable(ctx context.Context, pp abi.RegisteredP
 		}
 	}
 
-	bad, _, err := sm.StorageMgr.CheckProvable(ctx, pp, sectors, update, rg)
-	//bad, err := sm.StorageMgr.CheckProvable(ctx, pp, sectors, rg)
+	bad, err := sm.StorageMgr.CheckProvable(ctx, pp, sectors, rg)
 	if err != nil {
 		return nil, err
 	}
@@ -1300,19 +1239,4 @@ func (sm *StorageMinerAPI) ComputeProof(ctx context.Context, ssi []builtin.Exten
 
 func (sm *StorageMinerAPI) RuntimeSubsystems(context.Context) (res api.MinerSubsystems, err error) {
 	return sm.EnabledSubsystems, nil
-}
-
-func (sm *StorageMinerAPI) FullNodeList(ctx context.Context) ([]api.FnpItem, error) {
-	return sm.Full.List(ctx)
-}
-
-func (sm *StorageMinerAPI) FullNodeSetCurrent(ctx context.Context, index int) error {
-	return sm.Full.SetCurrent(ctx, index)
-}
-
-func (sm *StorageMinerAPI) FullNodeAdd(ctx context.Context, info string) error {
-	return sm.Full.Add(ctx, info)
-}
-func (sm *StorageMinerAPI) FullNodeRemove(ctx context.Context, index int) error {
-	return sm.Full.Remove(ctx, index)
 }

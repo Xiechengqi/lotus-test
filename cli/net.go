@@ -36,7 +36,6 @@ var NetCmd = &cli.Command{
 		NetId,
 		NetFindPeer,
 		NetScores,
-		NetExchangeCosts,
 		NetReachability,
 		NetBandwidthCmd,
 		NetBlockCmd,
@@ -117,27 +116,6 @@ var NetPeers = &cli.Command{
 			}
 		}
 
-		return nil
-	},
-}
-
-var NetExchangeCosts = &cli.Command{
-	Name:  "costs",
-	Usage: "Print peers' exchange clients' costs",
-	Action: func(cctx *cli.Context) error {
-		api, closer, err := GetFullNodeAPIV1(cctx)
-		if err != nil {
-			return err
-		}
-		defer closer()
-		ctx := ReqContext(cctx)
-		costs, err := api.NetExchangeCosts(ctx)
-		if err != nil {
-			return err
-		}
-		for _, peer := range costs {
-			fmt.Printf("%s, %f\n", peer.ID, peer.Cost)
-		}
 		return nil
 	},
 }

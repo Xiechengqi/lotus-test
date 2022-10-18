@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+
 	commcid "github.com/filecoin-project/go-fil-commcid"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/xerrors"

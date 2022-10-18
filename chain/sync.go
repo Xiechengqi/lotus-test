@@ -690,8 +690,6 @@ func (syncer *Syncer) collectHeaders(ctx context.Context, incoming *types.TipSet
 		trace.Int64Attribute("knownHeight", int64(known.Height())),
 	)
 
-	log.Infof("octopus: know tipset: %d= %v", known.Height(), known.Cids())
-
 	// Check if the parents of the from block are in the denylist.
 	// i.e. if a fork of the chain has been requested that we know to be bad.
 	for _, pcid := range incoming.Parents().Cids() {
@@ -1190,7 +1188,6 @@ func (syncer *Syncer) collectChain(ctx context.Context, ts *types.TipSet, hts *t
 		ss.Error(err)
 		return err
 	}
-	log.Warn("octopus: collectHeaders completes")
 
 	span.AddAttributes(trace.Int64Attribute("syncChainLength", int64(len(headers))))
 
@@ -1210,7 +1207,6 @@ func (syncer *Syncer) collectChain(ctx context.Context, ts *types.TipSet, hts *t
 		return err
 	}
 	toPersist = nil
-	log.Warn("octopus: PersistBlockHeaders completes")
 
 	ss.SetStage(api.StageMessages)
 
@@ -1219,7 +1215,6 @@ func (syncer *Syncer) collectChain(ctx context.Context, ts *types.TipSet, hts *t
 		ss.Error(err)
 		return err
 	}
-	log.Warn("octopus: syncMessagesAndCheckState completes")
 
 	ss.SetStage(api.StageSyncComplete)
 	log.Debugw("new tipset", "height", ts.Height(), "tipset", types.LogCids(ts.Cids()))

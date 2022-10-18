@@ -77,12 +77,11 @@ func (b *Provider) AcquireSector(ctx context.Context, id storage.SectorRef, exis
 			prevDone()
 			<-ch
 		}
+
 		if !allocate.Has(fileType) {
-			if os.Getenv("QINIU") == "" || fileType.Has(storiface.FTUnsealed) || fileType.Has(storiface.FTUpdate) {
-				if _, err := os.Stat(path); os.IsNotExist(err) {
-					done()
-					return storiface.SectorPaths{}, nil, storiface.ErrSectorNotFound
-				}
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				done()
+				return storiface.SectorPaths{}, nil, storiface.ErrSectorNotFound
 			}
 		}
 

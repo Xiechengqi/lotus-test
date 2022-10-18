@@ -7,10 +7,7 @@ import (
 	"fmt"
 	"math"
 	stdbig "math/big"
-	"os"
 	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -180,8 +177,6 @@ type MessagePool struct {
 
 	evtTypes [3]journal.EventType
 	journal  journal.Journal
-
-	minerPendingProveMsgCount map[address.Address]int
 }
 
 type nonceCacheKey struct {
@@ -410,8 +405,7 @@ func New(ctx context.Context, api Provider, ds dtypes.MetadataDS, us stmgr.Upgra
 			evtTypeMpoolRemove: j.RegisterEventType("mpool", "remove"),
 			evtTypeMpoolRepub:  j.RegisterEventType("mpool", "repub"),
 		},
-		journal:                   j,
-		minerPendingProveMsgCount: make(map[address.Address]int),
+		journal: j,
 	}
 
 	// enable initial prunes
@@ -421,7 +415,6 @@ func New(ctx context.Context, api Provider, ds dtypes.MetadataDS, us stmgr.Upgra
 
 	// load the current tipset and subscribe to head changes _before_ loading local messages
 	mp.curTs = api.SubscribeHeadChanges(func(rev, app []*types.TipSet) error {
-		log.Infof("octopus: reorg: messagepool HeadChange")
 		err := mp.HeadChange(ctx, rev, app)
 		if err != nil {
 			log.Errorf("mpool head notif handler error: %+v", err)
@@ -535,7 +528,6 @@ func (mp *MessagePool) deletePendingMset(ctx context.Context, addr address.Addre
 // This method isn't strictly necessary, since it doesn't resolve any addresses, but it's safer to have
 func (mp *MessagePool) clearPending() {
 	mp.pending = make(map[address.Address]*msgSet)
-	mp.minerPendingProveMsgCount = make(map[address.Address]int)
 }
 
 func (mp *MessagePool) isLocal(ctx context.Context, addr address.Address) (bool, error) {
@@ -678,40 +670,6 @@ func (mp *MessagePool) verifyMsgBeforeAdd(m *types.SignedMessage, curTs *types.T
 	return publish, nil
 }
 
-func minerPendingProveMsgLimit() map[address.Address]int {
-	minerPendingProveMsgCountLimit := make(map[address.Address]int)
-	minerPendingProveMsgCountLimitEnv := os.Getenv("MINER_PENDING_PROVE_MSG_COUNT_LIMIT")
-	if minerPendingProveMsgCountLimitEnv != "" {
-		arr := strings.Split(minerPendingProveMsgCountLimitEnv, ",")
-		for _, part := range arr {
-			partArr := strings.Split(part, ":")
-			if addr, addrErr := address.NewFromString(partArr[0]); addrErr == nil {
-				if limit, limitErr := strconv.Atoi(partArr[1]); limitErr == nil {
-					minerPendingProveMsgCountLimit[addr] = limit
-					//log.Debugf("octopus: messagepool: minerPendingProveMsgCountLimit %v -> %d", addr, limit)
-				}
-			}
-		}
-	}
-	return minerPendingProveMsgCountLimit
-}
-
-func (mp *MessagePool) updateProveMsgCount(m *types.SignedMessage, diff int) {
-	minerPendingProveMsgLimitMap := minerPendingProveMsgLimit()
-	if len(minerPendingProveMsgLimitMap) > 0 {
-		if _, has := minerPendingProveMsgLimitMap[m.Message.To]; has {
-			if m.Message.Method == abi.MethodNum(7) {
-				_, ok := mp.minerPendingProveMsgCount[m.Message.To]
-				if !ok {
-					mp.minerPendingProveMsgCount[m.Message.To] = 0
-				}
-				mp.minerPendingProveMsgCount[m.Message.To] = mp.minerPendingProveMsgCount[m.Message.To] + diff
-				log.Debugf("octopus: messagepool: miner %v provemsg count+(%d)=%d", m.Message.To, diff, mp.minerPendingProveMsgCount[m.Message.To])
-			}
-		}
-	}
-}
-
 func (mp *MessagePool) Push(ctx context.Context, m *types.SignedMessage) (cid.Cid, error) {
 	done := metrics.Timer(ctx, metrics.MpoolPushDuration)
 	defer done()
@@ -719,21 +677,6 @@ func (mp *MessagePool) Push(ctx context.Context, m *types.SignedMessage) (cid.Ci
 	err := mp.checkMessage(m)
 	if err != nil {
 		return cid.Undef, err
-	}
-
-	minerPendingProveMsgLimitMap := minerPendingProveMsgLimit()
-	if len(minerPendingProveMsgLimitMap) > 0 {
-		if limit, has := minerPendingProveMsgLimitMap[m.Message.To]; has {
-			if m.Message.Method == abi.MethodNum(7) { // prove
-				log.Debugf("octopus: messagepool: miner(%v) provemessage: %v", m.Message.To, m.Cid())
-				if count, has := mp.minerPendingProveMsgCount[m.Message.To]; has {
-					if count >= limit {
-						return cid.Undef,
-							xerrors.Errorf("octopus: messagepool: miner(%v) too many pending prove message: current(%d) limit(%d)", m.Message.To, count, limit)
-					}
-				}
-			}
-		}
 	}
 
 	// serialize push access to reduce lock contention
@@ -920,8 +863,6 @@ func (mp *MessagePool) addTs(ctx context.Context, m *types.SignedMessage, curTs 
 	}
 
 	if local {
-		mp.updateProveMsgCount(m, 1)
-
 		err = mp.addLocal(ctx, m)
 		if err != nil {
 			return false, xerrors.Errorf("error persisting local message: %w", err)
@@ -1185,8 +1126,6 @@ func (mp *MessagePool) remove(ctx context.Context, from address.Address, nonce u
 				Action:   "remove",
 				Messages: []MessagePoolEvtMessage{{Message: m.Message, CID: m.Cid()}}}
 		})
-
-		mp.updateProveMsgCount(m, -1)
 
 		mp.currentSize--
 	}
@@ -1581,8 +1520,6 @@ func (mp *MessagePool) loadLocal(ctx context.Context) error {
 
 			log.Errorf("adding local message: %+v", err)
 		}
-
-		mp.updateProveMsgCount(&sm, 1)
 
 		if err = mp.setLocal(ctx, sm.Message.From); err != nil {
 			log.Debugf("mpoolloadLocal errored: %s", err)

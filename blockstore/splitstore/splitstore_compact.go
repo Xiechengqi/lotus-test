@@ -65,7 +65,6 @@ const (
 )
 
 func (s *SplitStore) HeadChange(_, apply []*types.TipSet) error {
-	log.Infof("octopus: reorg: SplitStore: HeadChange")
 	s.headChangeMx.Lock()
 	defer s.headChangeMx.Unlock()
 

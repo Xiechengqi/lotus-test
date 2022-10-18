@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/qiniupd/qiniu-go-sdk/syncdata/operation"
 	"io"
 	"io/ioutil"
 	"math/bits"
@@ -18,21 +17,20 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hashicorp/go-multierror"
-	"golang.org/x/xerrors"
+	"github.com/filecoin-project/lotus/extern/sector-storage/fsutil"
+	"github.com/filecoin-project/lotus/extern/sector-storage/storiface"
+	"github.com/filecoin-project/lotus/extern/sector-storage/tarutil"
 
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/specs-storage/storage"
 
-	"github.com/filecoin-project/lotus/extern/sector-storage/ffiwrapper"
-	"github.com/filecoin-project/lotus/extern/sector-storage/fsutil"
-	"github.com/filecoin-project/lotus/extern/sector-storage/storiface"
-	"github.com/filecoin-project/lotus/extern/sector-storage/tarutil"
+	"github.com/hashicorp/go-multierror"
+	"golang.org/x/xerrors"
 )
 
-const fetchTempSubdir = "fetching"
+var FetchTempSubdir = "fetching"
 
-const CopyBuf = 1 << 20
+var CopyBuf = 1 << 20
 
 type Remote struct {
 	local Store
@@ -145,7 +143,6 @@ func (r *Remote) AcquireSector(ctx context.Context, s storage.SectorRef, existin
 		return storiface.SectorPaths{}, storiface.SectorPaths{}, xerrors.Errorf("allocate local sector for fetching: %w", err)
 	}
 
-	// octopus: in our solution, no remote so no FSOverheadCCSeal
 	odt := storiface.FSOverheadSeal
 	if pathType == storiface.PathStorage {
 		odt = storiface.FsOverheadFinalized
@@ -195,7 +192,7 @@ func (r *Remote) AcquireSector(ctx context.Context, s storage.SectorRef, existin
 
 func tempFetchDest(spath string, create bool) (string, error) {
 	st, b := filepath.Split(spath)
-	tempdir := filepath.Join(st, fetchTempSubdir)
+	tempdir := filepath.Join(st, FetchTempSubdir)
 	if create {
 		if err := os.MkdirAll(tempdir, 0755); err != nil { // nolint
 			return "", xerrors.Errorf("creating temp fetch dir: %w", err)
@@ -241,15 +238,6 @@ func (r *Remote) acquireFromRemote(ctx context.Context, s abi.SectorID, fileType
 
 			if err := move(tempDest, dest); err != nil {
 				return "", xerrors.Errorf("fetch move error (storage %s) %s -> %s: %w", info.ID, tempDest, dest, err)
-			}
-
-			if ffiwrapper.QiniuFeatureEnabled(ffiwrapper.QiniuFeatureMinerUpload) {
-				//miner统一上传逻辑
-				log.Infof("QINIU upload %s after fetch", dest)
-				if err := ffiwrapper.QiniuUploadByMiner(dest); err != nil {
-					log.Errorf("QINIU upload %s after fetch error %w", dest, err)
-					return "", err
-				}
 			}
 
 			if merr != nil {
@@ -538,26 +526,12 @@ func (r *Remote) readRemote(ctx context.Context, url string, offset, size abi.Pa
 func (r *Remote) CheckIsUnsealed(ctx context.Context, s storage.SectorRef, offset, size abi.PaddedPieceSize) (bool, error) {
 	ft := storiface.FTUnsealed
 
-	var path string
-	var err error
-	if os.Getenv("QINIU") != "" {
-		path = filepath.Join(ffiwrapper.QiniuStorePath(), storiface.FTUnsealed.String(), storiface.SectorName(s.ID))
-		if ffiwrapper.IsQiniuFileExists(path) {
-			log.Info("download unseal from cloud", path)
-			d := operation.NewDownloaderV2()
-			_, err = d.DownloadFile(path, path)
-		} else {
-			log.Info("octopus: qiniu not exists: ", path)
-		}
-	} else {
-		paths, _, err := r.local.AcquireSector(ctx, s, ft, storiface.FTNone, storiface.PathStorage, storiface.AcquireMove)
-		if err != nil {
-			return false, xerrors.Errorf("acquire local: %w", err)
-		}
-
-		path = storiface.PathByType(paths, ft)
+	paths, _, err := r.local.AcquireSector(ctx, s, ft, storiface.FTNone, storiface.PathStorage, storiface.AcquireMove)
+	if err != nil {
+		return false, xerrors.Errorf("acquire local: %w", err)
 	}
 
+	path := storiface.PathByType(paths, ft)
 	if path != "" {
 		// if we have the unsealed file locally, check if it has the unsealed piece.
 		log.Infof("Read local %s (+%d,%d)", path, offset, size)
@@ -639,33 +613,13 @@ func (r *Remote) CheckIsUnsealed(ctx context.Context, s storage.SectorRef, offse
 func (r *Remote) Reader(ctx context.Context, s storage.SectorRef, offset, size abi.PaddedPieceSize) (func(startOffsetAligned storiface.PaddedByteIndex) (io.ReadCloser, error), error) {
 	ft := storiface.FTUnsealed
 
-	//// check if we have the unsealed sector file locally
-	//paths, _, err := r.local.AcquireSector(ctx, s, ft, storiface.FTNone, storiface.PathStorage, storiface.AcquireMove)
-	//if err != nil {
-	//	return nil, xerrors.Errorf("acquire local: %w", err)
-	//}
-	//
-	//path := storiface.PathByType(paths, ft)
-
-	var path string
-	var err error
-	if os.Getenv("QINIU") != "" {
-		path = filepath.Join(ffiwrapper.QiniuStorePath(), storiface.FTUnsealed.String(), storiface.SectorName(s.ID))
-		if ffiwrapper.IsQiniuFileExists(path) {
-			log.Info("download unseal from cloud", path)
-			d := operation.NewDownloaderV2()
-			_, err = d.DownloadFile(path, path)
-		} else {
-			log.Info("octopus: qiniu not exists: ", path)
-		}
-	} else {
-		paths, _, err := r.local.AcquireSector(ctx, s, ft, storiface.FTNone, storiface.PathStorage, storiface.AcquireMove)
-		if err != nil {
-			return nil, xerrors.Errorf("acquire local: %w", err)
-		}
-
-		path = storiface.PathByType(paths, ft)
+	// check if we have the unsealed sector file locally
+	paths, _, err := r.local.AcquireSector(ctx, s, ft, storiface.FTNone, storiface.PathStorage, storiface.AcquireMove)
+	if err != nil {
+		return nil, xerrors.Errorf("acquire local: %w", err)
 	}
+
+	path := storiface.PathByType(paths, ft)
 
 	if path != "" {
 		// if we have the unsealed file locally, return a reader that can be used to read the contents of the

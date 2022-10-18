@@ -4,9 +4,7 @@ import (
 	"context"
 	"math"
 	"math/rand"
-	"os"
 	"sort"
-	"strconv"
 
 	lbuiltin "github.com/filecoin-project/lotus/chain/actors/builtin"
 
@@ -372,15 +370,9 @@ func (m *GasModule) GasEstimateMessageGas(ctx context.Context, msg *types.Messag
 		}
 		msg.GasPremium = gasPremium
 	}
-	if msg.GasFeeCap == types.EmptyInt || types.BigCmp(msg.GasFeeCap, types.NewInt(0)) == 0 {
-		maxEstimateGasBlks := int64(20)
-		maxEstimateGasBlksStr := os.Getenv("MAX_ESTIMATE_GAS_BLKS")
-		if maxEstimateGasBlksStr != "" {
-			maxEstimateGasBlks, _ = strconv.ParseInt(maxEstimateGasBlksStr, 10, 64)
-		}
 
-		log.Info("GasEstimateFeeCap for next %d blocks", maxEstimateGasBlks)
-		feeCap, err := m.GasEstimateFeeCap(ctx, msg, maxEstimateGasBlks, types.EmptyTSK)
+	if msg.GasFeeCap == types.EmptyInt || types.BigCmp(msg.GasFeeCap, types.NewInt(0)) == 0 {
+		feeCap, err := m.GasEstimateFeeCap(ctx, msg, 20, types.EmptyTSK)
 		if err != nil {
 			return nil, xerrors.Errorf("estimating fee cap: %w", err)
 		}

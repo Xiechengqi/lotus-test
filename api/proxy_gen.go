@@ -66,13 +66,7 @@ type CommonStruct struct {
 
 		Closing func(p0 context.Context) (<-chan struct{}, error) `perm:"read"`
 
-		DecodeBitField func(p0 context.Context, p1 string) ([]uint64, error) `perm:"read"`
-
 		Discover func(p0 context.Context) (apitypes.OpenRPCDocument, error) `perm:"read"`
-
-		GetAllEnv func(p0 context.Context) (map[string]string, error) `perm:"read"`
-
-		GetEnv func(p0 context.Context, p1 string) (string, error) `perm:"read"`
 
 		LogAlerts func(p0 context.Context) ([]alerting.Alert, error) `perm:"admin"`
 
@@ -81,8 +75,6 @@ type CommonStruct struct {
 		LogSetLevel func(p0 context.Context, p1 string, p2 string) error `perm:"write"`
 
 		Session func(p0 context.Context) (uuid.UUID, error) `perm:"read"`
-
-		SetEnv func(p0 context.Context, p1 string, p2 string) error `perm:"read"`
 
 		Shutdown func(p0 context.Context) error `perm:"admin"`
 
@@ -286,8 +278,6 @@ type FullNodeStruct struct {
 
 		MsigCancel func(p0 context.Context, p1 address.Address, p2 uint64, p3 address.Address) (*MessagePrototype, error) `perm:"sign"`
 
-		MsigCancelSimple func(p0 context.Context, p1 address.Address, p2 uint64, p3 address.Address) (*MessagePrototype, error) `perm:"sign"`
-
 		MsigCancelTxnHash func(p0 context.Context, p1 address.Address, p2 uint64, p3 address.Address, p4 types.BigInt, p5 address.Address, p6 uint64, p7 []byte) (*MessagePrototype, error) `perm:"sign"`
 
 		MsigCreate func(p0 context.Context, p1 uint64, p2 []address.Address, p3 abi.ChainEpoch, p4 types.BigInt, p5 address.Address, p6 types.BigInt) (*MessagePrototype, error) `perm:"sign"`
@@ -309,8 +299,6 @@ type FullNodeStruct struct {
 		MsigSwapCancel func(p0 context.Context, p1 address.Address, p2 address.Address, p3 uint64, p4 address.Address, p5 address.Address) (*MessagePrototype, error) `perm:"sign"`
 
 		MsigSwapPropose func(p0 context.Context, p1 address.Address, p2 address.Address, p3 address.Address, p4 address.Address) (*MessagePrototype, error) `perm:"sign"`
-
-		NetExchangeCosts func(p0 context.Context) ([]ExchangeClientCost, error) `perm:"read"`
 
 		NodeStatus func(p0 context.Context, p1 bool) (NodeStatus, error) `perm:"read"`
 
@@ -663,7 +651,7 @@ type StorageMinerStruct struct {
 
 		ActorSectorSize func(p0 context.Context, p1 address.Address) (abi.SectorSize, error) `perm:"read"`
 
-		CheckProvable func(p0 context.Context, p1 abi.RegisteredPoStProof, p2 []storage.SectorRef, p3 []bool, p4 bool) (map[abi.SectorNumber]string, error) `perm:"admin"`
+		CheckProvable func(p0 context.Context, p1 abi.RegisteredPoStProof, p2 []storage.SectorRef, p3 bool) (map[abi.SectorNumber]string, error) `perm:"admin"`
 
 		ComputeDataCid func(p0 context.Context, p1 abi.UnpaddedPieceSize, p2 storage.Data) (abi.PieceInfo, error) `perm:"admin"`
 
@@ -717,16 +705,6 @@ type StorageMinerStruct struct {
 
 		DealsSetPieceCidBlocklist func(p0 context.Context, p1 []cid.Cid) error `perm:"admin"`
 
-		FindDeal func(p0 context.Context, p1 abi.DealID) (string, error) `perm:"read"`
-
-		FullNodeAdd func(p0 context.Context, p1 string) error `perm:"admin"`
-
-		FullNodeList func(p0 context.Context) ([]FnpItem, error) `perm:"read"`
-
-		FullNodeRemove func(p0 context.Context, p1 int) error `perm:"admin"`
-
-		FullNodeSetCurrent func(p0 context.Context, p1 int) error `perm:"admin"`
-
 		IndexerAnnounceAllDeals func(p0 context.Context) error `perm:"admin"`
 
 		IndexerAnnounceDeal func(p0 context.Context, p1 cid.Cid) error `perm:"admin"`
@@ -777,8 +755,6 @@ type StorageMinerStruct struct {
 
 		PledgeSector func(p0 context.Context) (abi.SectorID, error) `perm:"write"`
 
-		PledgeSectors func(p0 context.Context, p1 int) ([]abi.SectorNumber, error) `perm:"write"`
-
 		ReturnAddPiece func(p0 context.Context, p1 storiface.CallID, p2 abi.PieceInfo, p3 *storiface.CallError) error `perm:"admin"`
 
 		ReturnDataCid func(p0 context.Context, p1 storiface.CallID, p2 abi.PieceInfo, p3 *storiface.CallError) error `perm:"admin"`
@@ -821,7 +797,7 @@ type StorageMinerStruct struct {
 
 		SectorAbortUpgrade func(p0 context.Context, p1 abi.SectorNumber) error `perm:"admin"`
 
-		SectorAddPieceToAny func(p0 context.Context, p1 abi.UnpaddedPieceSize, p2 storage.Data, p3 PieceDealInfo, p4 string) (SectorOffset, error) `perm:"admin"`
+		SectorAddPieceToAny func(p0 context.Context, p1 abi.UnpaddedPieceSize, p2 storage.Data, p3 PieceDealInfo) (SectorOffset, error) `perm:"admin"`
 
 		SectorCommitFlush func(p0 context.Context) ([]sealiface.CommitBatchRes, error) `perm:"admin"`
 
@@ -857,8 +833,6 @@ type StorageMinerStruct struct {
 
 		SectorsListInStates func(p0 context.Context, p1 []SectorState) ([]abi.SectorNumber, error) `perm:"read"`
 
-		SectorsRecover func(p0 context.Context, p1 abi.SectorNumber) error `perm:"admin"`
-
 		SectorsRefs func(p0 context.Context) (map[string][]SealedRef, error) `perm:"read"`
 
 		SectorsStatus func(p0 context.Context, p1 abi.SectorNumber, p2 bool) (SectorInfo, error) `perm:"read"`
@@ -877,8 +851,6 @@ type StorageMinerStruct struct {
 
 		StorageDeclareSector func(p0 context.Context, p1 storiface.ID, p2 abi.SectorID, p3 storiface.SectorFileType, p4 bool) error `perm:"admin"`
 
-		StorageDeclareSectors func(p0 context.Context, p1 []abi.SectorID) (map[abi.SectorNumber][]storiface.SectorFileType, error) `perm:"admin"`
-
 		StorageDropSector func(p0 context.Context, p1 storiface.ID, p2 abi.SectorID, p3 storiface.SectorFileType) error `perm:"admin"`
 
 		StorageFindSector func(p0 context.Context, p1 abi.SectorID, p2 storiface.SectorFileType, p3 abi.SectorSize, p4 bool) ([]storiface.SectorStorageInfo, error) `perm:"admin"`
@@ -889,9 +861,7 @@ type StorageMinerStruct struct {
 
 		StorageList func(p0 context.Context) (map[storiface.ID][]storiface.Decl, error) `perm:"admin"`
 
-		StorageListSelected func(p0 context.Context, p1 map[storiface.ID]string) (map[storiface.ID][]storiface.Decl, error) `perm:"admin"`
-
-		StorageLocal func(p0 context.Context, p1 bool) (map[storiface.ID]string, error) `perm:"admin"`
+		StorageLocal func(p0 context.Context) (map[storiface.ID]string, error) `perm:"admin"`
 
 		StorageLock func(p0 context.Context, p1 abi.SectorID, p2 storiface.SectorFileType, p3 storiface.SectorFileType) error `perm:"admin"`
 
@@ -903,11 +873,7 @@ type StorageMinerStruct struct {
 
 		WorkerConnect func(p0 context.Context, p1 string) error `perm:"admin"`
 
-		WorkerGetAbility func(p0 context.Context) ([]storiface.WorkerAbility, error) `perm:"admin"`
-
 		WorkerJobs func(p0 context.Context) (map[uuid.UUID][]storiface.WorkerJob, error) `perm:"admin"`
-
-		WorkerSetAbility func(p0 context.Context, p1 uuid.UUID, p2 string) error `perm:"admin"`
 
 		WorkerStats func(p0 context.Context) (map[uuid.UUID]storiface.WorkerStats, error) `perm:"admin"`
 	}
@@ -1075,17 +1041,6 @@ func (s *CommonStub) Closing(p0 context.Context) (<-chan struct{}, error) {
 	return nil, ErrNotSupported
 }
 
-func (s *CommonStruct) DecodeBitField(p0 context.Context, p1 string) ([]uint64, error) {
-	if s.Internal.DecodeBitField == nil {
-		return *new([]uint64), ErrNotSupported
-	}
-	return s.Internal.DecodeBitField(p0, p1)
-}
-
-func (s *CommonStub) DecodeBitField(p0 context.Context, p1 string) ([]uint64, error) {
-	return *new([]uint64), ErrNotSupported
-}
-
 func (s *CommonStruct) Discover(p0 context.Context) (apitypes.OpenRPCDocument, error) {
 	if s.Internal.Discover == nil {
 		return *new(apitypes.OpenRPCDocument), ErrNotSupported
@@ -1095,28 +1050,6 @@ func (s *CommonStruct) Discover(p0 context.Context) (apitypes.OpenRPCDocument, e
 
 func (s *CommonStub) Discover(p0 context.Context) (apitypes.OpenRPCDocument, error) {
 	return *new(apitypes.OpenRPCDocument), ErrNotSupported
-}
-
-func (s *CommonStruct) GetAllEnv(p0 context.Context) (map[string]string, error) {
-	if s.Internal.GetAllEnv == nil {
-		return *new(map[string]string), ErrNotSupported
-	}
-	return s.Internal.GetAllEnv(p0)
-}
-
-func (s *CommonStub) GetAllEnv(p0 context.Context) (map[string]string, error) {
-	return *new(map[string]string), ErrNotSupported
-}
-
-func (s *CommonStruct) GetEnv(p0 context.Context, p1 string) (string, error) {
-	if s.Internal.GetEnv == nil {
-		return "", ErrNotSupported
-	}
-	return s.Internal.GetEnv(p0, p1)
-}
-
-func (s *CommonStub) GetEnv(p0 context.Context, p1 string) (string, error) {
-	return "", ErrNotSupported
 }
 
 func (s *CommonStruct) LogAlerts(p0 context.Context) ([]alerting.Alert, error) {
@@ -1161,17 +1094,6 @@ func (s *CommonStruct) Session(p0 context.Context) (uuid.UUID, error) {
 
 func (s *CommonStub) Session(p0 context.Context) (uuid.UUID, error) {
 	return *new(uuid.UUID), ErrNotSupported
-}
-
-func (s *CommonStruct) SetEnv(p0 context.Context, p1 string, p2 string) error {
-	if s.Internal.SetEnv == nil {
-		return ErrNotSupported
-	}
-	return s.Internal.SetEnv(p0, p1, p2)
-}
-
-func (s *CommonStub) SetEnv(p0 context.Context, p1 string, p2 string) error {
-	return ErrNotSupported
 }
 
 func (s *CommonStruct) Shutdown(p0 context.Context) error {
@@ -2142,17 +2064,6 @@ func (s *FullNodeStub) MsigCancel(p0 context.Context, p1 address.Address, p2 uin
 	return nil, ErrNotSupported
 }
 
-func (s *FullNodeStruct) MsigCancelSimple(p0 context.Context, p1 address.Address, p2 uint64, p3 address.Address) (*MessagePrototype, error) {
-	if s.Internal.MsigCancelSimple == nil {
-		return nil, ErrNotSupported
-	}
-	return s.Internal.MsigCancelSimple(p0, p1, p2, p3)
-}
-
-func (s *FullNodeStub) MsigCancelSimple(p0 context.Context, p1 address.Address, p2 uint64, p3 address.Address) (*MessagePrototype, error) {
-	return nil, ErrNotSupported
-}
-
 func (s *FullNodeStruct) MsigCancelTxnHash(p0 context.Context, p1 address.Address, p2 uint64, p3 address.Address, p4 types.BigInt, p5 address.Address, p6 uint64, p7 []byte) (*MessagePrototype, error) {
 	if s.Internal.MsigCancelTxnHash == nil {
 		return nil, ErrNotSupported
@@ -2272,17 +2183,6 @@ func (s *FullNodeStruct) MsigSwapPropose(p0 context.Context, p1 address.Address,
 
 func (s *FullNodeStub) MsigSwapPropose(p0 context.Context, p1 address.Address, p2 address.Address, p3 address.Address, p4 address.Address) (*MessagePrototype, error) {
 	return nil, ErrNotSupported
-}
-
-func (s *FullNodeStruct) NetExchangeCosts(p0 context.Context) ([]ExchangeClientCost, error) {
-	if s.Internal.NetExchangeCosts == nil {
-		return *new([]ExchangeClientCost), ErrNotSupported
-	}
-	return s.Internal.NetExchangeCosts(p0)
-}
-
-func (s *FullNodeStub) NetExchangeCosts(p0 context.Context) ([]ExchangeClientCost, error) {
-	return *new([]ExchangeClientCost), ErrNotSupported
 }
 
 func (s *FullNodeStruct) NodeStatus(p0 context.Context, p1 bool) (NodeStatus, error) {
@@ -4023,14 +3923,14 @@ func (s *StorageMinerStub) ActorSectorSize(p0 context.Context, p1 address.Addres
 	return *new(abi.SectorSize), ErrNotSupported
 }
 
-func (s *StorageMinerStruct) CheckProvable(p0 context.Context, p1 abi.RegisteredPoStProof, p2 []storage.SectorRef, p3 []bool, p4 bool) (map[abi.SectorNumber]string, error) {
+func (s *StorageMinerStruct) CheckProvable(p0 context.Context, p1 abi.RegisteredPoStProof, p2 []storage.SectorRef, p3 bool) (map[abi.SectorNumber]string, error) {
 	if s.Internal.CheckProvable == nil {
 		return *new(map[abi.SectorNumber]string), ErrNotSupported
 	}
-	return s.Internal.CheckProvable(p0, p1, p2, p3, p4)
+	return s.Internal.CheckProvable(p0, p1, p2, p3)
 }
 
-func (s *StorageMinerStub) CheckProvable(p0 context.Context, p1 abi.RegisteredPoStProof, p2 []storage.SectorRef, p3 []bool, p4 bool) (map[abi.SectorNumber]string, error) {
+func (s *StorageMinerStub) CheckProvable(p0 context.Context, p1 abi.RegisteredPoStProof, p2 []storage.SectorRef, p3 bool) (map[abi.SectorNumber]string, error) {
 	return *new(map[abi.SectorNumber]string), ErrNotSupported
 }
 
@@ -4320,61 +4220,6 @@ func (s *StorageMinerStub) DealsSetPieceCidBlocklist(p0 context.Context, p1 []ci
 	return ErrNotSupported
 }
 
-func (s *StorageMinerStruct) FindDeal(p0 context.Context, p1 abi.DealID) (string, error) {
-	if s.Internal.FindDeal == nil {
-		return "", ErrNotSupported
-	}
-	return s.Internal.FindDeal(p0, p1)
-}
-
-func (s *StorageMinerStub) FindDeal(p0 context.Context, p1 abi.DealID) (string, error) {
-	return "", ErrNotSupported
-}
-
-func (s *StorageMinerStruct) FullNodeAdd(p0 context.Context, p1 string) error {
-	if s.Internal.FullNodeAdd == nil {
-		return ErrNotSupported
-	}
-	return s.Internal.FullNodeAdd(p0, p1)
-}
-
-func (s *StorageMinerStub) FullNodeAdd(p0 context.Context, p1 string) error {
-	return ErrNotSupported
-}
-
-func (s *StorageMinerStruct) FullNodeList(p0 context.Context) ([]FnpItem, error) {
-	if s.Internal.FullNodeList == nil {
-		return *new([]FnpItem), ErrNotSupported
-	}
-	return s.Internal.FullNodeList(p0)
-}
-
-func (s *StorageMinerStub) FullNodeList(p0 context.Context) ([]FnpItem, error) {
-	return *new([]FnpItem), ErrNotSupported
-}
-
-func (s *StorageMinerStruct) FullNodeRemove(p0 context.Context, p1 int) error {
-	if s.Internal.FullNodeRemove == nil {
-		return ErrNotSupported
-	}
-	return s.Internal.FullNodeRemove(p0, p1)
-}
-
-func (s *StorageMinerStub) FullNodeRemove(p0 context.Context, p1 int) error {
-	return ErrNotSupported
-}
-
-func (s *StorageMinerStruct) FullNodeSetCurrent(p0 context.Context, p1 int) error {
-	if s.Internal.FullNodeSetCurrent == nil {
-		return ErrNotSupported
-	}
-	return s.Internal.FullNodeSetCurrent(p0, p1)
-}
-
-func (s *StorageMinerStub) FullNodeSetCurrent(p0 context.Context, p1 int) error {
-	return ErrNotSupported
-}
-
 func (s *StorageMinerStruct) IndexerAnnounceAllDeals(p0 context.Context) error {
 	if s.Internal.IndexerAnnounceAllDeals == nil {
 		return ErrNotSupported
@@ -4650,17 +4495,6 @@ func (s *StorageMinerStub) PledgeSector(p0 context.Context) (abi.SectorID, error
 	return *new(abi.SectorID), ErrNotSupported
 }
 
-func (s *StorageMinerStruct) PledgeSectors(p0 context.Context, p1 int) ([]abi.SectorNumber, error) {
-	if s.Internal.PledgeSectors == nil {
-		return *new([]abi.SectorNumber), ErrNotSupported
-	}
-	return s.Internal.PledgeSectors(p0, p1)
-}
-
-func (s *StorageMinerStub) PledgeSectors(p0 context.Context, p1 int) ([]abi.SectorNumber, error) {
-	return *new([]abi.SectorNumber), ErrNotSupported
-}
-
 func (s *StorageMinerStruct) ReturnAddPiece(p0 context.Context, p1 storiface.CallID, p2 abi.PieceInfo, p3 *storiface.CallError) error {
 	if s.Internal.ReturnAddPiece == nil {
 		return ErrNotSupported
@@ -4892,14 +4726,14 @@ func (s *StorageMinerStub) SectorAbortUpgrade(p0 context.Context, p1 abi.SectorN
 	return ErrNotSupported
 }
 
-func (s *StorageMinerStruct) SectorAddPieceToAny(p0 context.Context, p1 abi.UnpaddedPieceSize, p2 storage.Data, p3 PieceDealInfo, p4 string) (SectorOffset, error) {
+func (s *StorageMinerStruct) SectorAddPieceToAny(p0 context.Context, p1 abi.UnpaddedPieceSize, p2 storage.Data, p3 PieceDealInfo) (SectorOffset, error) {
 	if s.Internal.SectorAddPieceToAny == nil {
 		return *new(SectorOffset), ErrNotSupported
 	}
-	return s.Internal.SectorAddPieceToAny(p0, p1, p2, p3, p4)
+	return s.Internal.SectorAddPieceToAny(p0, p1, p2, p3)
 }
 
-func (s *StorageMinerStub) SectorAddPieceToAny(p0 context.Context, p1 abi.UnpaddedPieceSize, p2 storage.Data, p3 PieceDealInfo, p4 string) (SectorOffset, error) {
+func (s *StorageMinerStub) SectorAddPieceToAny(p0 context.Context, p1 abi.UnpaddedPieceSize, p2 storage.Data, p3 PieceDealInfo) (SectorOffset, error) {
 	return *new(SectorOffset), ErrNotSupported
 }
 
@@ -5090,17 +4924,6 @@ func (s *StorageMinerStub) SectorsListInStates(p0 context.Context, p1 []SectorSt
 	return *new([]abi.SectorNumber), ErrNotSupported
 }
 
-func (s *StorageMinerStruct) SectorsRecover(p0 context.Context, p1 abi.SectorNumber) error {
-	if s.Internal.SectorsRecover == nil {
-		return ErrNotSupported
-	}
-	return s.Internal.SectorsRecover(p0, p1)
-}
-
-func (s *StorageMinerStub) SectorsRecover(p0 context.Context, p1 abi.SectorNumber) error {
-	return ErrNotSupported
-}
-
 func (s *StorageMinerStruct) SectorsRefs(p0 context.Context) (map[string][]SealedRef, error) {
 	if s.Internal.SectorsRefs == nil {
 		return *new(map[string][]SealedRef), ErrNotSupported
@@ -5200,17 +5023,6 @@ func (s *StorageMinerStub) StorageDeclareSector(p0 context.Context, p1 storiface
 	return ErrNotSupported
 }
 
-func (s *StorageMinerStruct) StorageDeclareSectors(p0 context.Context, p1 []abi.SectorID) (map[abi.SectorNumber][]storiface.SectorFileType, error) {
-	if s.Internal.StorageDeclareSectors == nil {
-		return *new(map[abi.SectorNumber][]storiface.SectorFileType), ErrNotSupported
-	}
-	return s.Internal.StorageDeclareSectors(p0, p1)
-}
-
-func (s *StorageMinerStub) StorageDeclareSectors(p0 context.Context, p1 []abi.SectorID) (map[abi.SectorNumber][]storiface.SectorFileType, error) {
-	return *new(map[abi.SectorNumber][]storiface.SectorFileType), ErrNotSupported
-}
-
 func (s *StorageMinerStruct) StorageDropSector(p0 context.Context, p1 storiface.ID, p2 abi.SectorID, p3 storiface.SectorFileType) error {
 	if s.Internal.StorageDropSector == nil {
 		return ErrNotSupported
@@ -5266,25 +5078,14 @@ func (s *StorageMinerStub) StorageList(p0 context.Context) (map[storiface.ID][]s
 	return *new(map[storiface.ID][]storiface.Decl), ErrNotSupported
 }
 
-func (s *StorageMinerStruct) StorageListSelected(p0 context.Context, p1 map[storiface.ID]string) (map[storiface.ID][]storiface.Decl, error) {
-	if s.Internal.StorageListSelected == nil {
-		return *new(map[storiface.ID][]storiface.Decl), ErrNotSupported
-	}
-	return s.Internal.StorageListSelected(p0, p1)
-}
-
-func (s *StorageMinerStub) StorageListSelected(p0 context.Context, p1 map[storiface.ID]string) (map[storiface.ID][]storiface.Decl, error) {
-	return *new(map[storiface.ID][]storiface.Decl), ErrNotSupported
-}
-
-func (s *StorageMinerStruct) StorageLocal(p0 context.Context, p1 bool) (map[storiface.ID]string, error) {
+func (s *StorageMinerStruct) StorageLocal(p0 context.Context) (map[storiface.ID]string, error) {
 	if s.Internal.StorageLocal == nil {
 		return *new(map[storiface.ID]string), ErrNotSupported
 	}
-	return s.Internal.StorageLocal(p0, p1)
+	return s.Internal.StorageLocal(p0)
 }
 
-func (s *StorageMinerStub) StorageLocal(p0 context.Context, p1 bool) (map[storiface.ID]string, error) {
+func (s *StorageMinerStub) StorageLocal(p0 context.Context) (map[storiface.ID]string, error) {
 	return *new(map[storiface.ID]string), ErrNotSupported
 }
 
@@ -5343,17 +5144,6 @@ func (s *StorageMinerStub) WorkerConnect(p0 context.Context, p1 string) error {
 	return ErrNotSupported
 }
 
-func (s *StorageMinerStruct) WorkerGetAbility(p0 context.Context) ([]storiface.WorkerAbility, error) {
-	if s.Internal.WorkerGetAbility == nil {
-		return *new([]storiface.WorkerAbility), ErrNotSupported
-	}
-	return s.Internal.WorkerGetAbility(p0)
-}
-
-func (s *StorageMinerStub) WorkerGetAbility(p0 context.Context) ([]storiface.WorkerAbility, error) {
-	return *new([]storiface.WorkerAbility), ErrNotSupported
-}
-
 func (s *StorageMinerStruct) WorkerJobs(p0 context.Context) (map[uuid.UUID][]storiface.WorkerJob, error) {
 	if s.Internal.WorkerJobs == nil {
 		return *new(map[uuid.UUID][]storiface.WorkerJob), ErrNotSupported
@@ -5363,17 +5153,6 @@ func (s *StorageMinerStruct) WorkerJobs(p0 context.Context) (map[uuid.UUID][]sto
 
 func (s *StorageMinerStub) WorkerJobs(p0 context.Context) (map[uuid.UUID][]storiface.WorkerJob, error) {
 	return *new(map[uuid.UUID][]storiface.WorkerJob), ErrNotSupported
-}
-
-func (s *StorageMinerStruct) WorkerSetAbility(p0 context.Context, p1 uuid.UUID, p2 string) error {
-	if s.Internal.WorkerSetAbility == nil {
-		return ErrNotSupported
-	}
-	return s.Internal.WorkerSetAbility(p0, p1, p2)
-}
-
-func (s *StorageMinerStub) WorkerSetAbility(p0 context.Context, p1 uuid.UUID, p2 string) error {
-	return ErrNotSupported
 }
 
 func (s *StorageMinerStruct) WorkerStats(p0 context.Context) (map[uuid.UUID]storiface.WorkerStats, error) {

@@ -1,7 +1,6 @@
 package storiface
 
 import (
-	"context"
 	"fmt"
 
 	"golang.org/x/xerrors"
@@ -33,12 +32,6 @@ var FSOverheadSeal = map[SectorFileType]int{ // 10x overheads
 	FTUpdate:      FSOverheadDen,
 	FTUpdateCache: FSOverheadDen*2 + 1,
 	FTCache:       141, // 11 layers + D(2x ssize) + C + R'
-}
-
-var FSOverheadCCSeal = map[SectorFileType]int{ // 10x overheads
-	FTUnsealed: 0,
-	FTSealed:   0,
-	FTCache:    121, // 11 layers + C + R
 }
 
 // sector size * disk / fs overhead.  FSOverheadDen is like the unit of sector size
@@ -74,29 +67,14 @@ func (t SectorFileType) Has(singleType SectorFileType) bool {
 	return t&singleType == singleType
 }
 
-func (t SectorFileType) SealSpaceUse(ctx context.Context, ssize abi.SectorSize) (uint64, error) {
+func (t SectorFileType) SealSpaceUse(ssize abi.SectorSize) (uint64, error) {
 	var need uint64
-
-	isCCSector := true
-	sp := ctx.Value("isCC")
-	if p, ok := sp.(bool); ok {
-		if !p {
-			isCCSector = false
-		}
-	}
-	var overhead map[SectorFileType]int
-	if isCCSector {
-		overhead = FSOverheadCCSeal
-	} else {
-		overhead = FSOverheadSeal
-	}
-
 	for _, pathType := range PathTypes {
 		if !t.Has(pathType) {
 			continue
 		}
 
-		oh, ok := overhead[pathType]
+		oh, ok := FSOverheadSeal[pathType]
 		if !ok {
 			return 0, xerrors.Errorf("no seal overhead info for %s", pathType)
 		}

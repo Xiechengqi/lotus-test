@@ -1,31 +1,26 @@
 package sectorblocks
 
 import (
-	"encoding/binary"
-	"github.com/filecoin-project/go-state-types/abi"
-	"github.com/filecoin-project/lotus/api"
-	"github.com/filecoin-project/specs-storage/storage"
-	"github.com/ipfs/go-datastore"
-	dshelp "github.com/ipfs/go-ipfs-ds-help"
-)
-
-import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"sync"
 
+	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-datastore/namespace"
 	"github.com/ipfs/go-datastore/query"
+	dshelp "github.com/ipfs/go-ipfs-ds-help"
 	"golang.org/x/xerrors"
 
 	cborutil "github.com/filecoin-project/go-cbor-util"
-	"github.com/filecoin-project/lotus/node/modules/dtypes"
-	logging "github.com/ipfs/go-log/v2"
-)
+	"github.com/filecoin-project/go-state-types/abi"
+	"github.com/filecoin-project/specs-storage/storage"
 
-var log = logging.Logger("blocks")
+	"github.com/filecoin-project/lotus/api"
+	"github.com/filecoin-project/lotus/node/modules/dtypes"
+)
 
 type SealSerialization uint8
 
@@ -53,31 +48,20 @@ func DsKeyToDealID(key datastore.Key) (uint64, error) {
 }
 
 type SectorBuilder interface {
-	SectorAddPieceToAny(ctx context.Context, size abi.UnpaddedPieceSize, r storage.Data, d api.PieceDealInfo, p string) (api.SectorOffset, error)
+	SectorAddPieceToAny(ctx context.Context, size abi.UnpaddedPieceSize, r storage.Data, d api.PieceDealInfo) (api.SectorOffset, error)
 	SectorsStatus(ctx context.Context, sid abi.SectorNumber, showOnChainInfo bool) (api.SectorInfo, error)
-}
-
-// AllSectorBuilders support multiple miners to inject
-type AllSectorBuilders struct {
-	SectorBuilders []SectorBuilder
 }
 
 type SectorBlocks struct {
 	SectorBuilder
 
-	asb AllSectorBuilders
-
 	keys  datastore.Batching
 	keyLk sync.Mutex
-
-	i   int
-	iLk sync.Mutex
 }
 
-func NewSectorBlocks(asb AllSectorBuilders, sb SectorBuilder, ds dtypes.MetadataDS) *SectorBlocks {
+func NewSectorBlocks(sb SectorBuilder, ds dtypes.MetadataDS) *SectorBlocks {
 	sbc := &SectorBlocks{
 		SectorBuilder: sb,
-		asb:           asb,
 		keys:          namespace.Wrap(ds, dsPrefix),
 	}
 
@@ -116,15 +100,8 @@ func (st *SectorBlocks) writeRef(ctx context.Context, dealID abi.DealID, sectorI
 	return st.keys.Put(ctx, DealIDToDsKey(dealID), newRef) // TODO: batch somehow
 }
 
-func (st *SectorBlocks) AddPiece(ctx context.Context, size abi.UnpaddedPieceSize, r io.Reader, d api.PieceDealInfo, p string) (abi.SectorNumber, abi.PaddedPieceSize, error) {
-	// send piece to a miner which is picked from miner list randomly.
-	st.iLk.Lock()
-	index := st.i % len(st.asb.SectorBuilders)
-	st.i = index + 1
-	log.Infof("octopus: send deal %v to miner %d. total miner count=%d\n", d.DealID, index, len(st.asb.SectorBuilders))
-	st.iLk.Unlock()
-
-	so, err := st.asb.SectorBuilders[index].SectorAddPieceToAny(ctx, size, r, d, p)
+func (st *SectorBlocks) AddPiece(ctx context.Context, size abi.UnpaddedPieceSize, r io.Reader, d api.PieceDealInfo) (abi.SectorNumber, abi.PaddedPieceSize, error) {
+	so, err := st.SectorBuilder.SectorAddPieceToAny(ctx, size, r, d)
 	if err != nil {
 		return 0, 0, err
 	}

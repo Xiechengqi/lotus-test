@@ -183,10 +183,6 @@ var storageListCmd = &cli.Command{
 			Usage:       "use color in display output",
 			DefaultText: "depends on output being a TTY",
 		},
-		&cli.BoolFlag{
-			Name: "only-seal",
-			Usage: "list seal storages",
-		},
 	},
 	Subcommands: []*cli.Command{
 		storageListSectorsCmd,
@@ -203,17 +199,12 @@ var storageListCmd = &cli.Command{
 		defer closer()
 		ctx := lcli.ReqContext(cctx)
 
-		onlySeal := false
-		if cctx.IsSet("only-seal") {
-			onlySeal = true
-		}
-
-		local, err := nodeApi.StorageLocal(ctx, onlySeal)
+		st, err := nodeApi.StorageList(ctx)
 		if err != nil {
 			return err
 		}
 
-		st, err := nodeApi.StorageListSelected(ctx, local)
+		local, err := nodeApi.StorageLocal(ctx)
 		if err != nil {
 			return err
 		}
@@ -499,7 +490,7 @@ var storageFindCmd = &cli.Command{
 			sts.updatecache = true
 		}
 
-		local, err := nodeApi.StorageLocal(ctx, false)
+		local, err := nodeApi.StorageLocal(ctx)
 		if err != nil {
 			return err
 		}

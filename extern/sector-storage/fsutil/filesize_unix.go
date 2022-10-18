@@ -41,29 +41,3 @@ func FileSize(path string) (SizeInfo, error) {
 
 	return SizeInfo{size}, nil
 }
-
-func FileStatSize(path string) (SizeInfo, error) {
-	var size int64
-	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			stat, ok := info.Sys().(*syscall.Stat_t)
-			if !ok {
-				return xerrors.New("FileInfo.Sys of wrong type")
-			}
-
-			size += stat.Size
-		}
-		return err
-	})
-	if err != nil {
-		if os.IsNotExist(err) {
-			return SizeInfo{}, os.ErrNotExist
-		}
-		return SizeInfo{}, xerrors.Errorf("filepath.Walk err: %w", err)
-	}
-
-	return SizeInfo{size}, nil
-}

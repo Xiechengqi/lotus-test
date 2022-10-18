@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/filecoin-project/go-address"
-	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -48,7 +46,6 @@ var sectorsCmd = &cli.Command{
 		sectorsRefsCmd,
 		sectorsUpdateCmd,
 		sectorsPledgeCmd,
-		sectorsPledgesCmd,
 		sectorsCheckExpireCmd,
 		sectorsExpiredCmd,
 		sectorsRenewCmd,
@@ -63,68 +60,6 @@ var sectorsCmd = &cli.Command{
 		sectorsBatching,
 		sectorsRefreshPieceMatchingCmd,
 		sectorsCompactPartitionsCmd,
-		sectorsRecoveryCmd,
-		sectorsFindDealCmd,
-		sectorsDeclareCmd,
-	},
-}
-
-var sectorsFindDealCmd = &cli.Command{
-	Name:      "find-deal",
-	Usage:     "find deal",
-	ArgsUsage: "<deal id>",
-	Action: func(cctx *cli.Context) error {
-		nodeApi, closer, err := lcli.GetStorageMinerAPI(cctx)
-		if err != nil {
-			return err
-		}
-		defer closer()
-		ctx := lcli.ReqContext(cctx)
-
-		if cctx.Args().Len() != 1 {
-			return fmt.Errorf("must specify deal id to find.")
-		}
-		dealId, err := strconv.ParseUint(cctx.Args().First(), 10, 64)
-		if err != nil {
-			return err
-		}
-		dealInfo, err := nodeApi.FindDeal(ctx, abi.DealID(dealId))
-		if err != nil {
-			fmt.Printf("error: %v", err)
-		}
-
-		fmt.Printf("Deal Info: %v\n", dealInfo)
-
-		return nil
-	},
-}
-
-var sectorsPledgesCmd = &cli.Command{
-	Name:  "pledges",
-	Usage: "store random data in several sectors",
-	Action: func(cctx *cli.Context) error {
-		nodeApi, closer, err := lcli.GetStorageMinerAPI(cctx)
-		if err != nil {
-			return err
-		}
-		defer closer()
-		ctx := lcli.ReqContext(cctx)
-
-		if cctx.Args().Len() != 1 {
-			return fmt.Errorf("must specify sector count to pledge")
-		}
-		count, err := strconv.ParseInt(cctx.Args().First(), 10, 64)
-		if err != nil {
-			return err
-		}
-		ids, err := nodeApi.PledgeSectors(ctx, int(count))
-		if err != nil {
-			fmt.Printf("error: %v", err)
-		}
-
-		fmt.Printf("Created CC sectors: %v", ids)
-
-		return nil
 	},
 }
 
@@ -1796,41 +1731,6 @@ var sectorsUpdateCmd = &cli.Command{
 	},
 }
 
-var sectorsRecoveryCmd = &cli.Command{
-	Name:      "recover",
-	Usage:     "recover a proved sector",
-	ArgsUsage: "<sectorNum>",
-	Flags: []cli.Flag{
-		&cli.BoolFlag{
-			Name:  "really-do-it",
-			Usage: "pass this flag if you know what you are doing",
-		},
-	},
-	Action: func(cctx *cli.Context) error {
-		if !cctx.Bool("really-do-it") {
-			return xerrors.Errorf("this is a command for advanced users, only use it if you are sure of what you are doing")
-		}
-
-		nodeApi, closer, err := lcli.GetStorageMinerAPI(cctx)
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		ctx := lcli.ReqContext(cctx)
-		if cctx.Args().Len() < 1 {
-			return xerrors.Errorf("must pass sector number and new state")
-		}
-
-		id, err := strconv.ParseUint(cctx.Args().Get(0), 10, 64)
-		if err != nil {
-			return xerrors.Errorf("could not parse sector number: %w", err)
-		}
-
-		return nodeApi.SectorsRecover(ctx, abi.SectorNumber(id))
-	},
-}
-
 var sectorsExpiredCmd = &cli.Command{
 	Name:  "expired",
 	Usage: "Get or cleanup expired sectors",
@@ -2179,184 +2079,6 @@ var sectorsRefreshPieceMatchingCmd = &cli.Command{
 		if err := nodeApi.SectorMatchPendingPiecesToOpenSectors(ctx); err != nil {
 			return err
 		}
-
-		return nil
-	},
-}
-
-var sectorsDeclareCmd = &cli.Command{
-	Name:  "declare",
-	Usage: "declare",
-	Subcommands: []*cli.Command{
-		sectorsDeclareByDeadlineCmd,
-		sectorsDeclareBySectorsCmd,
-	},
-}
-
-var sectorsDeclareByDeadlineCmd = &cli.Command{
-	Name:  "bydeadline",
-	Usage: "DeclareByDeadline",
-	Flags: []cli.Flag{
-		&cli.IntFlag{
-			Name:  "deadline",
-			Usage: "deadline index",
-			Value: 0,
-		},
-		&cli.IntFlag{
-			Name:  "partition",
-			Usage: "partition index",
-			Value: -1,
-		},
-	},
-	Action: func(cctx *cli.Context) error {
-		api, closer, err := lcli.GetFullNodeAPI(cctx)
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		nodeAPI, closer, err := lcli.GetStorageMinerAPI(cctx)
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		ctx := lcli.ReqContext(cctx)
-
-		maddr, err := nodeAPI.ActorAddress(ctx)
-		if err != nil {
-			return err
-		}
-
-		mid, err := address.IDFromAddress(maddr)
-
-		head, err := api.ChainHead(ctx)
-		if err != nil {
-			return err
-		}
-
-		//mInfo, err := api.StateMinerInfo(ctx, maddr, types.EmptyTSK)
-		//windowPoStProofType := mInfo.WindowPoStProofType
-		deadlineIndex := cctx.Int("deadline") //默认第0个deadline
-		// Get the partitions for the given deadline
-		partitions, err := api.StateMinerPartitions(ctx, maddr, uint64(deadlineIndex), head.Key())
-		if err != nil {
-			return xerrors.Errorf("getting partitions: %w", err)
-		}
-		var declareSectors []uint64
-
-		for partIdx, partition := range partitions {
-			if partitionIndex := cctx.Int("partition"); partitionIndex != -1 { //指定了partitonIndex
-				if partIdx != partitionIndex { //不是指定的不参与
-					continue
-				}
-			}
-			// TODO: Can do this in parallel
-			allSectors, err := partition.AllSectors.All(10000)
-			if err != nil {
-				fmt.Printf("getting sectors id in partition %v err: %v", partIdx, err)
-				fmt.Println()
-				continue
-			}
-			declareSectors = append(declareSectors, allSectors...)
-		}
-
-		if len(declareSectors) == 0 {
-			// nothing to prove for this deadline
-			fmt.Println("nothing to declare")
-			return nil
-		}
-		fmt.Println("Sectors to declare:")
-
-		var sectors []abi.SectorID
-		for _, v := range declareSectors {
-			fmt.Printf("%v ", v)
-			sectors = append(sectors, abi.SectorID{
-				Miner:  abi.ActorID(mid),
-				Number: abi.SectorNumber(v),
-			})
-		}
-		fmt.Println()
-
-		if result, err := nodeAPI.StorageDeclareSectors(ctx, sectors); err != nil {
-			return err
-		} else {
-			fmt.Println("Sectors declared:")
-			for k, v := range result {
-				fmt.Printf("%v", k)
-				fmt.Printf("(%v)", v)
-			}
-			fmt.Println()
-		}
-		return nil
-	},
-}
-
-var sectorsDeclareBySectorsCmd = &cli.Command{
-	Name:      "bysectors",
-	Usage:     "DeclareBySectors",
-	ArgsUsage: "<file path>",
-	Action: func(cctx *cli.Context) error {
-		if cctx.Args().Len() != 1 {
-			return xerrors.Errorf("must pass file path")
-		}
-		path := cctx.Args().First()
-
-		nodeAPI, closer, err := lcli.GetStorageMinerAPI(cctx)
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		maddr, err := nodeAPI.ActorAddress(cctx.Context)
-		if err != nil {
-			return err
-		}
-
-		mid, err := address.IDFromAddress(maddr)
-
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-
-		var sectors []abi.SectorID
-
-		reader := bufio.NewReader(f)
-		for {
-			line, _, err := reader.ReadLine()
-			if err == io.EOF {
-				break
-			}
-			sectorNumber, err := strconv.ParseUint(string(line), 10, 64)
-			if err != nil {
-				return err
-			}
-
-			sectors = append(sectors, abi.SectorID{
-				Miner:  abi.ActorID(mid),
-				Number: abi.SectorNumber(sectorNumber),
-			})
-		}
-
-		fmt.Println("Sectors to declare:")
-		for _, v := range sectors {
-			fmt.Printf("%v ", v.Number)
-		}
-
-		fmt.Println("")
-		ctx := lcli.ReqContext(cctx)
-		if result, err := nodeAPI.StorageDeclareSectors(ctx, sectors); err != nil {
-			return err
-		} else {
-			fmt.Println("Sectors declared:")
-			for k, v := range result {
-				fmt.Printf("%v", k)
-				fmt.Printf("(%v)", v)
-			}
-		}
-		fmt.Println()
 
 		return nil
 	},

@@ -1,9 +1,6 @@
 package sealing
 
 import (
-	"bytes"
-	"fmt"
-	"strconv"
 	"context"
 	"math/bits"
 
@@ -15,8 +12,6 @@ import (
 
 	"github.com/filecoin-project/lotus/extern/storage-sealing/sealiface"
 )
-
-var RedisSectorInfoKeyPrefix = "sectorinfo"
 
 func fillersFromRem(in abi.UnpaddedPieceSize) ([]abi.UnpaddedPieceSize, error) {
 	// Convert to in-sector bytes for easier math:
@@ -62,154 +57,10 @@ func (m *Sealing) ListSectors() ([]SectorInfo, error) {
 	return sectors, nil
 }
 
-func (m *Sealing) ListAllSectors() ([]SectorInfo, error) {
-	//log.Infof("octopus: override ListAllSectors")
-	var sectors []SectorInfo
-	if err := m.sectors.List(&sectors); err != nil {
-		return nil, err
-	}
-
-	mid, addressErr := address.IDFromAddress(m.maddr)
-	if addressErr == nil {
-		var ctx = context.Background()
-
-		//keysKey := fmt.Sprintf("%v:sectorinfo:*", mid)
-		//log.Infof("octopus: Sector Info Keys: %s", keysKey)
-		//keysStr, redisErr := m.redisClient.Keys(ctx, keysKey).Result()
-
-		sectorInfosKey := fmt.Sprintf("%v:%s", mid, RedisSectorInfoKeyPrefix)
-		keysStr, redisErr := m.redisClient.SMembers(ctx, sectorInfosKey).Result()
-
-		if redisErr == nil {
-			for _, keyStr := range keysStr {
-				//number, _ := strconv.ParseInt(strings.Split(keyStr, ":")[2], 10, 64)
-				number, _ := strconv.ParseInt(keyStr, 10, 64)
-				exists := false
-				for _, sector := range sectors {
-					if sector.SectorNumber == abi.SectorNumber(number) {
-						exists = true
-						break
-					}
-				}
-				if !exists {
-					key := fmt.Sprintf("%v:%s:%v", mid, RedisSectorInfoKeyPrefix, number)
-					out, err := m.getSectorInfoFromRedis(ctx, key)
-					if err == nil {
-						if out != nil {
-							sectors = append(sectors, *out)
-						}
-					} else {
-						log.Errorf("octopus: get sector info from redis error: %v", err)
-					}
-				}
-			}
-			return sectors, nil
-		} else {
-			log.Errorf("octopus: redis GetKeys error: %v", redisErr)
-		}
-	} else {
-		log.Errorf("octopus: IDFromAddress error: %v", addressErr)
-	}
-	return sectors, nil
-}
-
-func (m *Sealing) SectorsSend(id interface{}, evt interface{}) error {
-	log.Debugf("octopus: override SectorsSend: %v %v", id, evt)
-	exists, err := m.sectors.Has(id)
-	if err == nil && !exists {
-		mid, addressErr := address.IDFromAddress(m.maddr)
-		if addressErr == nil {
-			key := fmt.Sprintf("%v:%s:%v", mid, RedisSectorInfoKeyPrefix, id)
-			out, getErr := m.getSectorInfoFromRedis(context.Background(), key)
-			if getErr == nil {
-				if out != nil {
-					beginErr := m.sectors.Begin(id, &*out)
-					if beginErr != nil {
-						log.Errorf("octopus: begin error: %v", beginErr)
-					}
-				}
-			} else {
-				log.Errorf("octopus: get sector info from redis error: %v", getErr)
-			}
-		} else {
-			log.Errorf("octopus: IDFromAddress error: %v", addressErr)
-		}
-	}
-	log.Debugf("octopus: m.sectors.Send")
-	return m.sectors.Send(id, evt)
-}
-
 func (m *Sealing) GetSectorInfo(sid abi.SectorNumber) (SectorInfo, error) {
 	var out SectorInfo
 	err := m.sectors.Get(uint64(sid)).Get(&out)
-	log.Debugf("octopus: override GetSectorInfo: %d %v %v", uint64(sid), out.SectorNumber, out.State)
-
-	if err != nil {
-		//log.Infof("octopus: Failed to get sector %v info from datastore: %v. try from redis.", err, sid)
-
-		mid, addressErr := address.IDFromAddress(m.maddr)
-		if addressErr == nil {
-			key := fmt.Sprintf("%v:%s:%v", mid, RedisSectorInfoKeyPrefix, sid)
-			sectorInfo, getErr := m.getSectorInfoFromRedis(context.Background(), key)
-			if getErr != nil {
-				log.Errorf("get sector info from redis error: %v", err)
-			} else {
-				if sectorInfo != nil {
-					out = *sectorInfo
-					err = nil
-				}
-			}
-		} else {
-			log.Errorf("octopus: IDFromAddress error: %v", addressErr)
-		}
-	}
-
 	return out, err
-}
-
-func (m *Sealing) getSectorInfoFromRedis(ctx context.Context, key string) (*SectorInfo, error) {
-	exists, err := m.redisClient.Exists(ctx, key).Result()
-	if err != nil {
-		return nil, err
-	}
-	if exists == 1 {
-		value, err := m.redisClient.Get(ctx, key).Result()
-		if err != nil {
-			return nil, err
-		}
-
-		var sectorInfo SectorInfo
-		err = sectorInfo.UnmarshalCBOR(bytes.NewBuffer([]byte(value)))
-		return &sectorInfo, err
-
-		//var out SectorInfo
-		//jsonErr := json.Unmarshal([]byte(keyStr), &out)
-	} else {
-		return nil, nil
-	}
-}
-
-func (m *Sealing) setSectorInfoToRedis(ctx context.Context, minerId uint64, info *SectorInfo) error {
-	buf := new(bytes.Buffer)
-	err := info.MarshalCBOR(buf)
-	if err == nil {
-		key := fmt.Sprintf("%d:%s:%v", minerId, RedisSectorInfoKeyPrefix, info.SectorNumber)
-		_, redisErr := m.redisClient.Set(ctx, key, buf.String(), 0).Result()
-		if redisErr != nil {
-			log.Errorf("set sectorinfo to redis key=%s error: %v", key, redisErr)
-			return redisErr
-		}
-		allSectorInfosKey := fmt.Sprintf("%v:%s", minerId, RedisSectorInfoKeyPrefix)
-		_, redisErr = m.redisClient.SAdd(ctx, allSectorInfosKey, uint64(info.SectorNumber)).Result()
-		if redisErr != nil {
-			log.Errorf("sadd %v %v error: %v", allSectorInfosKey, info.SectorNumber, redisErr)
-			return redisErr
-		}
-	} else {
-		log.Errorf("marshal sector info error: %v", err)
-		return err
-	}
-	return nil
 }
 
 func collateralSendAmount(ctx context.Context, api interface {

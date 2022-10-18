@@ -2,9 +2,6 @@ package sealing
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"os"
 	"sort"
 	"time"
 
@@ -218,7 +215,8 @@ func (m *Sealing) handleAddPiece(ctx statemachine.Context, sector SectorInfo) er
 
 		for _, p := range pads {
 			expectCid := zerocomm.ZeroPieceCommitment(p.Unpadded())
-			ppi, err := m.sealer.AddPiece(context.WithValue(sectorstorage.WithPriority(ctx.Context(), DealSectorPriority), "isCC", false),
+
+			ppi, err := m.sealer.AddPiece(sectorstorage.WithPriority(ctx.Context(), DealSectorPriority),
 				m.minerSector(sector.SectorType, sector.SectorNumber),
 				pieceSizes,
 				p.Unpadded(),
@@ -240,15 +238,13 @@ func (m *Sealing) handleAddPiece(ctx statemachine.Context, sector SectorInfo) er
 			})
 		}
 
-		ppi, err := m.sealer.AddPiece(context.WithValue(sectorstorage.WithPriority(ctx.Context(), DealSectorPriority), "isCC", false),
+		ppi, err := m.sealer.AddPiece(sectorstorage.WithPriority(ctx.Context(), DealSectorPriority),
 			m.minerSector(sector.SectorType, sector.SectorNumber),
 			pieceSizes,
 			deal.size,
 			deal.data)
 		if err != nil {
-			err = xerrors.Errorf("writing piece: %w. retry add piece", err)
-			//log.Errorf("writing piece: %v", err)
-			//return nil
+			err = xerrors.Errorf("writing piece: %w", err)
 			deal.accepted(sector.SectorNumber, offset, err)
 			return ctx.Send(SectorAddPieceFailed{err})
 		}
@@ -256,24 +252,6 @@ func (m *Sealing) handleAddPiece(ctx statemachine.Context, sector SectorInfo) er
 			err = xerrors.Errorf("got unexpected piece CID: expected:%s, got:%s", deal.deal.DealProposal.PieceCID, ppi.PieceCID)
 			deal.accepted(sector.SectorNumber, offset, err)
 			return ctx.Send(SectorAddPieceFailed{err})
-		}
-
-		key := fmt.Sprintf("deal_%v", deal.deal.DealID)
-		sid := m.minerSectorID(sector.SectorNumber)
-		dealInfo := DealInfo{
-			Miner:        sid.Miner,
-			SectorNumber: sid.Number,
-		}
-		di, jsonErr := json.Marshal(dealInfo)
-		if jsonErr == nil {
-			_, jsonErr = m.redisClient.Set(context.Background(), key, di, 0).Result()
-			if jsonErr != nil {
-				log.Errorf("octopus: redis store %s error: %v", key, jsonErr)
-			} else {
-				log.Infof("octopus: redis store %s success.", key)
-			}
-		} else {
-			log.Errorf("octopus: redis store %s error: %v", key, jsonErr)
 		}
 
 		log.Infow("deal added to a sector", "deal", deal.deal.DealID, "sector", sector.SectorNumber, "piece", ppi.PieceCID)
@@ -293,127 +271,30 @@ func (m *Sealing) handleAddPiece(ctx statemachine.Context, sector SectorInfo) er
 }
 
 func (m *Sealing) handleAddPieceFailed(ctx statemachine.Context, sector SectorInfo) error {
-	//return ctx.Send(SectorRetryWaitDeals{})
-	log.Errorf("No recovery plan for AddPiece failing")
-	// todo: cleanup sector / just go retry (requires adding offset param to AddPiece in sector-storage for this to be safe)
-	return nil
+	return ctx.Send(SectorRetryWaitDeals{})
 }
 
-func (m *Sealing) updateAPInfoProcess(dealId abi.DealID) {
-	key := fmt.Sprintf("%v-ap-%d", m.maddr, dealId)
-
-	apInfo := APInfo{
-		DealID: dealId,
-		Status: "Processing",
-	}
-	i, je := json.Marshal(apInfo)
-	if je != nil {
-		log.Errorf("octopus: SectorAddPieceToAny: json marshal api info error: %v", je)
-	} else {
-		log.Debugf("octopus: SectorAddPieceToAny: redis: update key %s ", key)
-		_, re := m.redisClient.Set(context.Background(), key, i, 12*time.Hour).Result()
-		if re != nil {
-			log.Errorf("octopus: SectorAddPieceToAny: redis set api info error: %v", re)
-		}
-	}
-}
-
-func (m *Sealing) updateAPInfoError(dealId abi.DealID, errorString string) {
-	key := fmt.Sprintf("%v-ap-%d", m.maddr, dealId)
-
-	apInfo := APInfo{
-		DealID: dealId,
-		Status: "Error",
-		Reason: errorString,
-	}
-	i, je := json.Marshal(apInfo)
-	if je != nil {
-		log.Errorf("octopus: SectorAddPieceToAny: json marshal api info error: %v", je)
-	} else {
-		log.Debugf("octopus: SectorAddPieceToAny: redis: update key %s error", key)
-		_, re := m.redisClient.Set(context.Background(), key, i, 12*time.Hour).Result()
-		if re != nil {
-			log.Errorf("octopus: SectorAddPieceToAny: redis set api info error: %v", re)
-		}
-	}
-}
-
-func (m *Sealing) updateAPIInfoComplete(dealId abi.DealID, p abi.SectorNumber, offset abi.PaddedPieceSize) {
-	key := fmt.Sprintf("%v-ap-%d", m.maddr, dealId)
-
-	apInfo := APInfo{
-		DealID: dealId,
-		Status: "Complete",
-		P:      p,
-		Offset: offset,
-	}
-	i, je := json.Marshal(apInfo)
-	if je != nil {
-		log.Errorf("octopus: SectorAddPieceToAny: json marshal api info error: %v", je)
-	} else {
-		log.Debugf("octopus: SectorAddPieceToAny: redis: update key %s complete", key)
-		_, re := m.redisClient.Set(context.Background(), key, i, 12*time.Hour).Result()
-		if re != nil {
-			log.Errorf("octopus: SectorAddPieceToAny: redis set api info error: %v", re)
-		}
-	}
-}
-
-func (m *Sealing) SectorAddPieceToAny(ctx context.Context, size abi.UnpaddedPieceSize, data storage.Data, deal api.PieceDealInfo, path string) (api.SectorOffset, error) {
+func (m *Sealing) SectorAddPieceToAny(ctx context.Context, size abi.UnpaddedPieceSize, data storage.Data, deal api.PieceDealInfo) (api.SectorOffset, error) {
 	log.Infof("Adding piece for deal %d (publish msg: %s)", deal.DealID, deal.PublishCid)
-	m.updateAPInfoProcess(deal.DealID)
-
-	if uint64(deal.DealID) == 1380788 {
-		log.Errorf("1: get rid of 1380788")
-	}
-
-	// 依据是否有path来决定
-	if path != "" {
-		log.Infof("car path: %s", path)
-		file, err := os.Open(path)
-		if err != nil {
-			m.updateAPInfoError(deal.DealID, fmt.Sprintf("open piece file error %v. retry add piece", err))
-			return api.SectorOffset{}, xerrors.Errorf("open piece file error %w. retry add piece", err)
-		}
-
-		info, err := os.Stat(path)
-		if err != nil {
-			m.updateAPInfoError(deal.DealID, fmt.Sprintf("failed to get piece file size error %v. retry add piece", err))
-			return api.SectorOffset{}, xerrors.Errorf("failed to get piece file size error %w. retry add piece", err)
-		}
-
-		paddedReader, err := padreader.NewInflator(file, uint64(info.Size()), size)
-		if err != nil {
-			m.updateAPInfoError(deal.DealID, fmt.Sprintf("failed to inflate piece file error %v. retry add piece", err))
-			return api.SectorOffset{}, xerrors.Errorf("failed to inflate piece file error %w. retry add piece", err)
-		}
-		data = paddedReader
-	}
-
 	if (padreader.PaddedSize(uint64(size))) != size {
-		m.updateAPInfoError(deal.DealID, fmt.Sprintf("cannot allocate unpadded piece"))
 		return api.SectorOffset{}, xerrors.Errorf("cannot allocate unpadded piece")
 	}
 
 	sp, err := m.currentSealProof(ctx)
 	if err != nil {
-		m.updateAPInfoError(deal.DealID, fmt.Sprintf("getting current seal proof type: %v", err))
 		return api.SectorOffset{}, xerrors.Errorf("getting current seal proof type: %w", err)
 	}
 
 	ssize, err := sp.SectorSize()
 	if err != nil {
-		m.updateAPInfoError(deal.DealID, err.Error())
 		return api.SectorOffset{}, err
 	}
 
 	if size > abi.PaddedPieceSize(ssize).Unpadded() {
-		m.updateAPInfoError(deal.DealID, "piece cannot fit into a sector")
 		return api.SectorOffset{}, xerrors.Errorf("piece cannot fit into a sector")
 	}
 
 	if _, err := deal.DealProposal.Cid(); err != nil {
-		m.updateAPInfoError(deal.DealID, fmt.Sprintf("getting proposal CID: %v", err))
 		return api.SectorOffset{}, xerrors.Errorf("getting proposal CID: %w", err)
 	}
 
@@ -439,7 +320,6 @@ func (m *Sealing) SectorAddPieceToAny(ctx context.Context, size abi.UnpaddedPiec
 		// we already have a pre-existing add piece call for this deal, let's wait for it to finish and see if it's successful
 		res, err := waitAddPieceResp(ctx, pp)
 		if err != nil {
-			m.updateAPInfoError(deal.DealID, err.Error())
 			return api.SectorOffset{}, err
 		}
 		if res.err == nil {
@@ -455,10 +335,8 @@ func (m *Sealing) SectorAddPieceToAny(ctx context.Context, size abi.UnpaddedPiec
 
 	res, err := waitAddPieceResp(ctx, pp)
 	if err != nil {
-		m.updateAPInfoError(deal.DealID, err.Error())
 		return api.SectorOffset{}, err
 	}
-	m.updateAPIInfoComplete(deal.DealID, res.sn, res.offset.Padded())
 	return api.SectorOffset{Sector: res.sn, Offset: res.offset.Padded()}, res.err
 }
 
@@ -834,7 +712,7 @@ func (m *Sealing) StartPacking(sid abi.SectorNumber) error {
 	m.startupWait.Wait()
 
 	log.Infow("starting to seal deal sector", "sector", sid, "trigger", "user")
-	return m.SectorsSend(uint64(sid), SectorStartPacking{})
+	return m.sectors.Send(uint64(sid), SectorStartPacking{})
 }
 
 func (m *Sealing) AbortUpgrade(sid abi.SectorNumber) error {

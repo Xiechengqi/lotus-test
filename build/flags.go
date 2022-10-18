@@ -12,4 +12,4 @@ package build
 // defaults shipped with the binary.
 //
 // For this flag to be effective, it must be enabled _before_ instantiating Lotus.
-var DisableBuiltinAssets = true
+var DisableBuiltinAssets = false

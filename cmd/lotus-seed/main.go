@@ -144,7 +144,6 @@ var preSealCmd = &cli.Command{
 			return err
 		}
 
-		log.Info("---- spt: ", spt)
 		gm, key, err := seed.PreSeal(maddr, spt, abi.SectorNumber(c.Uint64("sector-offset")), c.Int("num-sectors"), sbroot, []byte(c.String("ticket-preimage")), k, c.Bool("fake-sectors"))
 		if err != nil {
 			return err

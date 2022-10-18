@@ -175,13 +175,11 @@ func newScheduler() *scheduler {
 func (sh *scheduler) Schedule(ctx context.Context, sector storage.SectorRef, taskType sealtasks.TaskType, sel WorkerSelector, prepare WorkerAction, work WorkerAction) error {
 	ret := make(chan workerResponse)
 
-	pri := getPriority(ctx)
-	log.Debugf("octopus: sched: task sector %v task %v priority %d", sector.ID.Number, taskType, pri)
 	select {
 	case sh.schedule <- &workerRequest{
 		sector:   sector,
 		taskType: taskType,
-		priority: pri,
+		priority: getPriority(ctx),
 		sel:      sel,
 
 		prepare: prepare,
@@ -419,19 +417,6 @@ func (sh *scheduler) trySched() {
 					continue
 				}
 
-				if _, ok := worker.info.TaskResources[task.taskType]; ok {
-					limit := sh.getTaskCount(windowRequest.worker, task.taskType, "limit")
-					if limit <= 0 {
-						log.Debugf("octopus: sched: worker #{windowRequest.worker} #{task.taskType} limit <= 0.")
-						continue
-					}
-					//freeCount := sh.getTaskFreeCount(windowRequest.worker, task.taskType)
-					//if freeCount <= 0 {
-					//	log.Debugf("octopus: sched: worker %v %v: no free run quota", windowRequest.worker, task.taskType)
-					//	continue
-					//}
-				}
-
 				acceptableWindows[sqi] = append(acceptableWindows[sqi], wnd)
 			}
 
@@ -624,81 +609,4 @@ func (sh *scheduler) Close(ctx context.Context) error {
 		return ctx.Err()
 	}
 	return nil
-}
-
-func (sh *scheduler) taskAddOne(wid storiface.WorkerID, phaseTaskType sealtasks.TaskType) {
-	if whl, ok := sh.workers[wid]; ok {
-		whl.info.TaskResourcesLk.Lock()
-		defer whl.info.TaskResourcesLk.Unlock()
-		actualTaskType := phaseTaskType
-		if phaseTaskType == sealtasks.TTPreCommit2 || phaseTaskType == sealtasks.TTCommit2 {
-			if _, ok = whl.info.TaskResources[sealtasks.TTAnyOfPC2C2]; ok {
-				actualTaskType = sealtasks.TTAnyOfPC2C2
-			}
-		}
-		if counts, ok := whl.info.TaskResources[actualTaskType]; ok {
-			log.Debugf("octopus: sched: worker %v task %v +1", wid, actualTaskType)
-			counts.RunCount++
-		}
-	}
-}
-
-func (sh *scheduler) taskReduceOne(wid storiface.WorkerID, phaseTaskType sealtasks.TaskType) {
-	if whl, ok := sh.workers[wid]; ok {
-		whl.info.TaskResourcesLk.Lock()
-		defer whl.info.TaskResourcesLk.Unlock()
-		actualTaskType := phaseTaskType
-		if phaseTaskType == sealtasks.TTPreCommit2 || phaseTaskType == sealtasks.TTCommit2 {
-			if _, ok = whl.info.TaskResources[sealtasks.TTAnyOfPC2C2]; ok {
-				actualTaskType = sealtasks.TTAnyOfPC2C2
-			}
-		}
-		if counts, ok := whl.info.TaskResources[actualTaskType]; ok {
-			log.Debugf("octopus: sched: worker %v task %v -1", wid, actualTaskType)
-			counts.RunCount--
-		}
-	}
-}
-
-func (sh *scheduler) getTaskCount(wid storiface.WorkerID, phaseTaskType sealtasks.TaskType, typeCount string) int {
-	if whl, ok := sh.workers[wid]; ok {
-		actualTaskType := phaseTaskType
-		if phaseTaskType == sealtasks.TTPreCommit2 || phaseTaskType == sealtasks.TTCommit2 {
-			if _, ok = whl.info.TaskResources[sealtasks.TTAnyOfPC2C2]; ok {
-				actualTaskType = sealtasks.TTAnyOfPC2C2
-			}
-		}
-		if counts, ok := whl.info.TaskResources[actualTaskType]; ok {
-			whl.info.TaskResourcesLk.Lock()
-			defer whl.info.TaskResourcesLk.Unlock()
-			if typeCount == "limit" {
-				return counts.LimitCount
-			}
-			if typeCount == "run" {
-				return counts.RunCount
-			}
-		}
-	}
-	return -1
-}
-
-func (sh *scheduler) getTaskFreeCount(wid storiface.WorkerID, phaseTaskType sealtasks.TaskType) int {
-	limitCount := sh.getTaskCount(wid, phaseTaskType, "limit")
-	runCount := sh.getTaskCount(wid, phaseTaskType, "run")
-	log.Debugf("octopus: sched: work %v task %v limit=%d run=%d", wid, phaseTaskType, limitCount, runCount)
-
-	freeCount := limitCount - runCount
-
-	if limitCount == 0 { // 0:禁止
-		return 0
-	}
-
-	//whl := sh.workers[wid]
-	log.Debugf("octopus: sched: worker %s %s: %d free count", wid, phaseTaskType, freeCount)
-
-	if freeCount >= 0 {
-		return freeCount
-	}
-
-	return 0
 }

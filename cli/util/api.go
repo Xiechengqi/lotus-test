@@ -28,63 +28,6 @@ const (
 	metadataTraceContext = "traceContext"
 )
 
-// flagsForAPI returns flags passed on the command line with the listen address
-// of the API server (only used by the tests), in the order of precedence they
-// should be applied for the requested kind of node.
-func flagsForAPI(t repo.RepoType) []string {
-	switch t {
-	case repo.FullNode:
-		return []string{"api-url"}
-	case repo.StorageMiner:
-		return []string{"miner-api-url"}
-	case repo.Worker:
-		return []string{"worker-api-url"}
-	case repo.Markets:
-		// support split markets-miner and monolith deployments.
-		return []string{"markets-api-url", "miner-api-url"}
-	default:
-		panic(fmt.Sprintf("Unknown repo type: %v", t))
-	}
-}
-
-func FlagsForRepo(t repo.RepoType) []string {
-	switch t {
-	case repo.FullNode:
-		return []string{"repo"}
-	case repo.StorageMiner:
-		return []string{"miner-repo"}
-	case repo.Worker:
-		return []string{"worker-repo"}
-	case repo.Markets:
-		// support split markets-miner and monolith deployments.
-		return []string{"markets-repo", "miner-repo"}
-	default:
-		panic(fmt.Sprintf("Unknown repo type: %v", t))
-	}
-}
-
-// EnvsForAPIInfos returns the environment variables to use in order of precedence
-// to determine the API endpoint of the specified node type.
-//
-// It returns the current variables and deprecated ones separately, so that
-// the user can log a warning when deprecated ones are found to be in use.
-func EnvsForAPIInfos(t repo.RepoType) (primary string, fallbacks []string, deprecated []string) {
-	switch t {
-	case repo.FullNode:
-		return "FULLNODE_API_INFO", nil, nil
-	case repo.StorageMiner:
-		// TODO remove deprecated deprecation period
-		return "MINER_API_INFO", nil, []string{"STORAGE_API_INFO"}
-	case repo.Worker:
-		return "WORKER_API_INFO", nil, nil
-	case repo.Markets:
-		// support split markets-miner and monolith deployments.
-		return "MARKETS_API_INFO", []string{"MINER_API_INFO"}, nil
-	default:
-		panic(fmt.Sprintf("Unknown repo type: %v", t))
-	}
-}
-
 // GetAPIInfo returns the API endpoint to use for the specified kind of repo.
 //
 // The order of precedence is as follows:
@@ -242,47 +185,6 @@ func GetFullNodeAPI(ctx *cli.Context) (v0api.FullNode, jsonrpc.ClientCloser, err
 	return client.NewFullNodeRPCV0(ctx.Context, addr, headers)
 }
 
-func GetFullNodeAPIV1More(ctx *cli.Context) (v1api.FullNode, jsonrpc.ClientCloser, APIInfo, error) {
-	if tn, ok := ctx.App.Metadata["testnode-full"]; ok {
-		return tn.(v1api.FullNode), func() {}, APIInfo{}, nil
-	}
-
-	t := repo.FullNode
-	ainfo, err := GetAPIInfo(ctx, t)
-	if err != nil {
-		return nil, nil, APIInfo{}, xerrors.Errorf("could not get API info for %s: %w", t, err)
-	}
-
-	version := "v1"
-	addr, err := ainfo.DialArgs(version)
-	if err != nil {
-		return nil, nil, APIInfo{}, xerrors.Errorf("could not get DialArgs: %w", err)
-	}
-
-	if IsVeryVerbose {
-		_, _ = fmt.Fprintf(ctx.App.Writer, "using raw API %s endpoint: %s\n", version, addr)
-	}
-
-	headers := ainfo.AuthHeader()
-
-	if IsVeryVerbose {
-		_, _ = fmt.Fprintln(ctx.App.Writer, "using full node API v1 endpoint:", addr)
-	}
-
-	v1API, closer, err := client.NewFullNodeRPCV1(ctx.Context, addr, headers)
-	if err != nil {
-		return nil, nil, APIInfo{}, err
-	}
-
-	v, err := v1API.Version(ctx.Context)
-	if err != nil {
-		return nil, nil, APIInfo{}, err
-	}
-	if !v.APIVersion.EqMajorMinor(api.FullAPIVersion1) {
-		return nil, nil, APIInfo{}, xerrors.Errorf("Remote API version didn't match (expected %s, remote %s)", api.FullAPIVersion1, v.APIVersion)
-	}
-	return v1API, closer, ainfo, nil
-}
 func GetFullNodeAPIV1(ctx *cli.Context) (v1api.FullNode, jsonrpc.ClientCloser, error) {
 	if tn, ok := ctx.App.Metadata["testnode-full"]; ok {
 		return tn.(v1api.FullNode), func() {}, nil

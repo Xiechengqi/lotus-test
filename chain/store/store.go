@@ -184,9 +184,7 @@ func NewChainStore(chainBs bstore.Blockstore, stateBs bstore.Blockstore, ds dsto
 			}
 		}
 
-		log.Infof("octopus: notify headchange")
 		cs.bestTips.Pub(notif, "headchange")
-		log.Infof("octopus: notify headchange completes")
 		return nil
 	}
 
@@ -385,21 +383,6 @@ func (cs *ChainStore) PutTipSet(ctx context.Context, ts *types.TipSet) error {
 			return err
 		}
 	}
-
-	//if os.Getenv("TEST_SYNC_HEIGHT") != "" {
-	//	h, e := strconv.Atoi(os.Getenv("TEST_SYNC_HEIGHT"))
-	//	if e == nil {
-	//		if ts.Blocks()[0].Height == abi.ChainEpoch(int64(h)) {
-	//			tsets, ok := cs.tipsets[ts.Blocks()[0].Height]
-	//			if ok {
-	//				if len(tsets) > 1 {
-	//					log.Infof("octopus: meet height tsets len=%d", len(tsets))
-	//					return nil
-	//				}
-	//			}
-	//		}
-	//	}
-	//}
 
 	expanded, err := cs.expandTipset(ctx, ts.Blocks()[0])
 	if err != nil {
@@ -603,9 +586,7 @@ func (cs *ChainStore) reorgWorker(ctx context.Context, initialNotifees []ReorgNo
 
 				var toremove map[int]struct{}
 				for i, hcf := range notifees {
-					log.Infof("octopus: hcf=%v start", hcf)
 					err := hcf(revert, apply)
-					log.Infof("octopus: hcf end")
 
 					switch err {
 					case nil:

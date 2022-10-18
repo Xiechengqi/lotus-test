@@ -5,7 +5,6 @@ import (
 
 	"golang.org/x/xerrors"
 
-	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/specs-storage/storage"
 )
 
@@ -37,13 +36,8 @@ func (m *Sealing) PledgeSector(ctx context.Context) (storage.SectorRef, error) {
 	}
 
 	log.Infof("Creating CC sector %d", sid)
-	return m.minerSector(spt, sid), m.SectorsSend(uint64(sid), SectorStartCC{
+	return m.minerSector(spt, sid), m.sectors.Send(uint64(sid), SectorStartCC{
 		ID:         sid,
 		SectorType: spt,
 	})
-}
-
-func (m *Sealing) RecoverSector(ctx context.Context, id abi.SectorNumber) error {
-	log.Infof("octopus: recover sector %v", id)
-	return m.SectorsSend(uint64(id), SectorRecover{})
 }

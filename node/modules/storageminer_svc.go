@@ -2,6 +2,7 @@ package modules
 
 import (
 	"context"
+
 	"github.com/filecoin-project/lotus/storage/sectorblocks"
 
 	"go.uber.org/fx"
@@ -66,21 +67,5 @@ func ConnectStorageService(apiInfo string) func(mctx helpers.MetricsCtx, lc fx.L
 	return func(mctx helpers.MetricsCtx, lc fx.Lifecycle) (MinerStorageService, error) {
 		log.Info("Connecting storage service to miner")
 		return connectMinerService(apiInfo)(mctx, lc)
-	}
-}
-
-
-// ConnectStorageServices connect several miners
-func ConnectStorageServices(apiInfos []string) func(mctx helpers.MetricsCtx, lc fx.Lifecycle) (sectorblocks.AllSectorBuilders, error) {
-	return func(mctx helpers.MetricsCtx, lc fx.Lifecycle) (sectorblocks.AllSectorBuilders, error) {
-		log.Infof("Connecting storage services to miner: api infos=%s", apiInfos)
-		builders := sectorblocks.AllSectorBuilders{}
-		for _, apiInfo := range apiInfos {
-			sm, e := connectMinerService(apiInfo)(mctx, lc)
-			if e == nil {
-				builders.SectorBuilders = append(builders.SectorBuilders, sm)
-			}
-		}
-		return builders, nil
 	}
 }

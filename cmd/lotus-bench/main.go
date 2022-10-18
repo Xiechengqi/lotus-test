@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	sectorstorage "github.com/filecoin-project/lotus/extern/sector-storage"
-	"github.com/ipfs/go-cid"
 	"io/ioutil"
 	"math/big"
 	"math/rand"
@@ -112,6 +110,7 @@ func main() {
 			importBenchCmd,
 		},
 	}
+
 	if err := app.Run(os.Args); err != nil {
 		log.Warnf("%+v", err)
 		return
@@ -203,11 +202,11 @@ var sealBenchCmd = &cli.Command{
 			if err != nil {
 				return err
 			}
-			//defer func() {
-			//	if err := os.RemoveAll(tsdir); err != nil {
-			//		log.Warn("remove all: ", err)
-			//	}
-			//}()
+			defer func() {
+				if err := os.RemoveAll(tsdir); err != nil {
+					log.Warn("remove all: ", err)
+				}
+			}()
 
 			// TODO: pretty sure this isnt even needed?
 			if err := os.MkdirAll(tsdir, 0775); err != nil {
@@ -328,33 +327,11 @@ var sealBenchCmd = &cli.Command{
 			return err
 		}
 
-		// <-- add for qiniu cloud test
-		var sidList []abi.SectorID
-		var cidList []cid.Cid
-		for _, v := range sealedSectors {
-			sid := abi.SectorID{
-				Miner:  mid,
-				Number: v.SectorNumber,
-			}
-			submitQ(sbfs, sid)
-			sidList = append(sidList, sid)
-			cidList = append(cidList, v.SealedCID)
-		}
-
-		time.Sleep(30 * time.Second)
-
-		bad := sectorstorage.CheckSectors(sbfs.Root, sidList, sectorSizeInt, cidList)
-		if len(bad) != 0 {
-			log.Warn("bad sectors", len(bad))
-			for _, b := range bad {
-				log.Warn("bad sector id", b)
-			}
-		}
-		// -->  add for qiniu cloud test
-
 		var challenge [32]byte
 		rand.Read(challenge[:])
+
 		beforePost := time.Now()
+
 		if !skipc2 {
 			log.Info("generating winning post candidates")
 			wipt, err := spt(sectorSize).RegisteredWinningPoStProof()
@@ -648,7 +625,6 @@ func runSeals(sb *ffiwrapper.Sealer, sbfs *basicfs.Provider, numSectors int, par
 					sealcommit1 := time.Now()
 
 					log.Infof("[%d] Generating PoRep for sector (2)", i)
-					fmt.Println("!!!!!!!!!!!!!!!!!! save c2in", saveC2inp)
 
 					if saveC2inp != "" {
 						c2in := Commit2In{
@@ -662,9 +638,7 @@ func runSeals(sb *ffiwrapper.Sealer, sbfs *basicfs.Provider, numSectors int, par
 							return err
 						}
 
-						if os.Getenv("QINIU") != "" {
-							submitC1(saveC2inp, b)
-						} else if err := ioutil.WriteFile(saveC2inp, b, 0664); err != nil {
+						if err := ioutil.WriteFile(saveC2inp, b, 0664); err != nil {
 							log.Warnf("%+v", err)
 						}
 					}
@@ -778,14 +752,7 @@ var proveCmd = &cli.Command{
 			return xerrors.Errorf("Usage: lotus-bench prove [input.json]")
 		}
 
-		var inb []byte
-		var err error
-		if os.Getenv("QINIU") != "" {
-			inb, err = dowanloadC1(c.Args().First())
-		} else {
-			inb, err = ioutil.ReadFile(c.Args().First())
-		}
-
+		inb, err := ioutil.ReadFile(c.Args().First())
 		if err != nil {
 			return xerrors.Errorf("reading input file: %w", err)
 		}

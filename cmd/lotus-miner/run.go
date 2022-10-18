@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/filecoin-project/lotus/octopus"
 	_ "net/http/pprof"
 	"os"
 
@@ -50,36 +49,6 @@ var runCmd = &cli.Command{
 			Usage: "manage open file limit",
 			Value: true,
 		},
-		&cli.StringFlag{
-			Name:  "redis-conn",
-			Usage: "redis connection string. if in cluster mode, separated each one with comma",
-			Value: "localhost:6379",
-		},
-		&cli.StringFlag{
-			Name:  "redis-password",
-			Usage: "redis connection password",
-			Value: "",
-		},
-		&cli.BoolFlag{
-			Name:  "enable-winning-post",
-			Usage: "support doing winning post",
-			Value: false,
-		},
-		&cli.BoolFlag{
-			Name:  "enable-window-post",
-			Usage: "support doing window post",
-			Value: false,
-		},
-		&cli.BoolFlag{
-			Name:  "disable-sealing",
-			Usage: "disable sealing",
-			Value: false,
-		},
-		&cli.StringFlag{
-			Name:  "ability",
-			Usage: "sealing task abilities",
-			Value: "PC1:1,PC2:1,C2:1",
-		},
 	},
 	Action: func(cctx *cli.Context) error {
 		if !cctx.Bool("enable-gpu-proving") {
@@ -88,46 +57,6 @@ var runCmd = &cli.Command{
 				return err
 			}
 		}
-
-		if cctx.Bool("enable-window-post") {
-			os.Setenv("ENABLE_WINDOW_POST", "true")
-		} else {
-			os.Unsetenv("ENABLE_WINDOW_POST")
-		}
-
-		if cctx.Bool("enable-winning-post") {
-			os.Setenv("ENABLE_WINNING_POST", "true")
-		} else {
-			os.Unsetenv("ENABLE_WINNING_POST")
-		}
-		if cctx.Bool("disable-sealing") {
-			os.Setenv("DISABLE_SEALING", "true")
-		} else {
-			os.Unsetenv("DISABLE_SEALING")
-		}
-
-		ability := cctx.String("ability")
-		if ability != "" {
-			os.Setenv("ABILITY", ability)
-		}
-
-		//redisConn := cctx.String("redis-conn")
-		//if redisConn == "" {
-		//	log.Errorf("redis conn must be set")
-		//	return xerrors.Errorf("redis-conn must be set.")
-		//}
-		//os.Setenv("REDIS_CONN", redisConn)
-		if os.Getenv("REDIS_CONN") == "" {
-			log.Errorf("env REDIS_CONN must be set.")
-			return nil
-		}
-		//
-		//redisPassword := cctx.String("redis-password")
-		//os.Setenv("REDIS_PASSWORD", redisPassword)
-		//if os.Getenv("REDIS_PASSWORD") == "" {
-		//	log.Errorf("env REDIS_PASSWORD must be set.")
-		//	return nil
-		//}
 
 		ctx, _ := tag.New(lcli.DaemonContext(cctx),
 			tag.Insert(metrics.Version, build.BuildVersion),
@@ -147,13 +76,11 @@ var runCmd = &cli.Command{
 			return err
 		}
 
-		nodeApi, ncloser, ainfo, err := lcli.GetFullNodeAPIV1More(cctx)
+		nodeApi, ncloser, err := lcli.GetFullNodeAPIV1(cctx)
 		if err != nil {
 			return xerrors.Errorf("getting full node api: %w", err)
 		}
-		//defer ncloser()
-		nodepool := octopus.NewFullNodePool(cctx, ctx, string(ainfo.Token)+":"+ainfo.Addr, nodeApi, ncloser)
-		defer nodepool.Close()
+		defer ncloser()
 
 		v, err := nodeApi.Version(ctx)
 		if err != nil {
@@ -226,7 +153,6 @@ var runCmd = &cli.Command{
 					return multiaddr.NewMultiaddr("/ip4/127.0.0.1/tcp/" + cctx.String("miner-api"))
 				})),
 			node.Override(new(v1api.FullNode), nodeApi),
-			node.Override(new(*octopus.FullNodePool), nodepool),
 		)
 		if err != nil {
 			return xerrors.Errorf("creating node: %w", err)

@@ -77,41 +77,6 @@ func (evt SectorStartCC) apply(state *SectorInfo) {
 	state.SectorType = evt.SectorType
 }
 
-// ---- recovery ----
-type SectorRecover struct{}
-
-func (evt SectorRecover) apply(state *SectorInfo) {
-	state.FinalizedTimes = 0
-	state.Recovering = true
-}
-
-type SectorCCRecovery struct{}
-
-func (evt SectorCCRecovery) apply(state *SectorInfo) {}
-
-type SectorPackedForRecovery struct{ FillerPieces []abi.PieceInfo }
-
-func (evt SectorPackedForRecovery) apply(state *SectorInfo) {
-	if len(state.Pieces) == 0 {
-		for idx := range evt.FillerPieces {
-			state.Pieces = append(state.Pieces, Piece{
-				Piece:    evt.FillerPieces[idx],
-				DealInfo: nil, // filler pieces don't have deals associated with them
-			})
-		}
-	}
-}
-
-type SectorRecoverFailed struct{}
-
-func (evt SectorRecoverFailed) apply(state *SectorInfo) {}
-
-type SectorRecovered struct{}
-
-func (evt SectorRecovered) apply(state *SectorInfo) {}
-
-// ---- recovery ----
-
 type SectorAddPiece struct{}
 
 func (evt SectorAddPiece) apply(state *SectorInfo) {
@@ -253,7 +218,6 @@ func (evt SectorSeedReady) apply(state *SectorInfo) {
 }
 
 type SectorComputeProofFailed struct{ error }
-type SectorCommit1Failed struct{ error }
 
 func (evt SectorComputeProofFailed) FormatError(xerrors.Printer) (next error) { return evt.error }
 func (evt SectorComputeProofFailed) apply(*SectorInfo)                        {}
@@ -262,11 +226,6 @@ type SectorCommitFailed struct{ error }
 
 func (evt SectorCommitFailed) FormatError(xerrors.Printer) (next error) { return evt.error }
 func (evt SectorCommitFailed) apply(*SectorInfo)                        {}
-
-type SectorCommitSubmitFailed struct{ error }
-
-func (evt SectorCommitSubmitFailed) FormatError(xerrors.Printer) (next error) { return evt.error }
-func (evt SectorCommitSubmitFailed) apply(*SectorInfo)                        {}
 
 type SectorRetrySubmitCommit struct{}
 
@@ -325,10 +284,7 @@ func (evt SectorProving) apply(*SectorInfo) {}
 
 type SectorFinalized struct{}
 
-func (evt SectorFinalized) apply(si *SectorInfo) {
-	si.FinalizedTimes++
-	si.Recovering = false
-}
+func (evt SectorFinalized) apply(*SectorInfo) {}
 
 type SectorFinalizedAvailable struct{}
 
@@ -557,7 +513,6 @@ func (evt SectorTerminateFailed) apply(*SectorInfo)                        {}
 type SectorRemove struct{}
 
 func (evt SectorRemove) applyGlobal(state *SectorInfo) bool {
-	log.Debugf("octopus: SectorRemove event -> removing")
 	state.State = Removing
 	return true
 }

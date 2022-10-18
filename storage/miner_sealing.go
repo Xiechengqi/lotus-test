@@ -7,7 +7,6 @@ import (
 	"golang.org/x/xerrors"
 
 	"github.com/filecoin-project/go-address"
-
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/specs-storage/storage"
@@ -28,16 +27,8 @@ func (m *Miner) StartPackingSector(sectorNum abi.SectorNumber) error {
 	return m.sealing.StartPacking(sectorNum)
 }
 
-func (m *Miner) ListSectors(onlyLocal bool) ([]sealing.SectorInfo, error) {
-	if onlyLocal {
-		return m.sealing.ListSectors()
-	} else {
-		return m.sealing.ListAllSectors()
-	}
-}
-
-func (m *Miner) FindDeal(ctx context.Context, dealId abi.DealID) (string, error) {
-	return m.sealing.FindDeal(ctx, dealId)
+func (m *Miner) ListSectors() ([]sealing.SectorInfo, error) {
+	return m.sealing.ListSectors()
 }
 
 func (m *Miner) PledgeSector(ctx context.Context) (storage.SectorRef, error) {
@@ -46,10 +37,6 @@ func (m *Miner) PledgeSector(ctx context.Context) (storage.SectorRef, error) {
 
 func (m *Miner) ForceSectorState(ctx context.Context, id abi.SectorNumber, state sealing.SectorState) error {
 	return m.sealing.ForceSectorState(ctx, id, state)
-}
-
-func (m *Miner) RecoverSector(ctx context.Context, id abi.SectorNumber) error {
-	return m.sealing.RecoverSector(ctx, id)
 }
 
 func (m *Miner) RemoveSector(ctx context.Context, id abi.SectorNumber) error {
@@ -99,8 +86,8 @@ func (m *Miner) SectorAbortUpgrade(sectorNum abi.SectorNumber) error {
 	return m.sealing.AbortUpgrade(sectorNum)
 }
 
-func (m *Miner) SectorAddPieceToAny(ctx context.Context, size abi.UnpaddedPieceSize, r storage.Data, d api.PieceDealInfo, p string) (api.SectorOffset, error) {
-	return m.sealing.SectorAddPieceToAny(ctx, size, r, d, p)
+func (m *Miner) SectorAddPieceToAny(ctx context.Context, size abi.UnpaddedPieceSize, r storage.Data, d api.PieceDealInfo) (api.SectorOffset, error) {
+	return m.sealing.SectorAddPieceToAny(ctx, size, r, d)
 }
 
 func (m *Miner) SectorsStatus(ctx context.Context, sid abi.SectorNumber, showOnChainInfo bool) (api.SectorInfo, error) {

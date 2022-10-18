@@ -3,10 +3,6 @@ package sealing
 import (
 	"bytes"
 	"context"
-	"github.com/filecoin-project/go-statemachine"
-	"os"
-	"strconv"
-	"strings"
 
 	"github.com/filecoin-project/go-state-types/proof"
 
@@ -19,6 +15,7 @@ import (
 	"github.com/filecoin-project/go-state-types/crypto"
 	"github.com/filecoin-project/go-state-types/exitcode"
 	"github.com/filecoin-project/go-state-types/network"
+	"github.com/filecoin-project/go-statemachine"
 	"github.com/filecoin-project/specs-storage/storage"
 
 	"github.com/filecoin-project/go-state-types/builtin"
@@ -28,69 +25,8 @@ import (
 	"github.com/filecoin-project/lotus/chain/actors/policy"
 )
 
-var RecoveryingSectorPriority = 1025
 var DealSectorPriority = 1024
 var MaxTicketAge = policy.MaxPreCommitRandomnessLookback
-
-func (m *Sealing) handleZeroPacking(ctx statemachine.Context, sector SectorInfo) error {
-	m.inputLk.Lock()
-	// make sure we not accepting deals into this sector
-	for _, c := range m.assignedPieces[m.minerSectorID(sector.SectorNumber)] {
-		pp := m.pendingPieces[c]
-		delete(m.pendingPieces, c)
-		if pp == nil {
-			log.Errorf("nil assigned pending piece %s", c)
-			continue
-		}
-
-		// todo: return to the sealing queue (this is extremely unlikely to happen)
-		pp.accepted(sector.SectorNumber, 0, xerrors.Errorf("sector %d entered packing state early", sector.SectorNumber))
-	}
-
-	delete(m.openSectors, m.minerSectorID(sector.SectorNumber))
-	delete(m.assignedPieces, m.minerSectorID(sector.SectorNumber))
-	m.inputLk.Unlock()
-
-	log.Infow("octopus: pack zero sector...", "sector", sector.SectorNumber)
-
-	ssize, err := sector.SectorType.SectorSize()
-	if err != nil {
-		return err
-	}
-
-	existing := make([]abi.UnpaddedPieceSize, 0)
-	fillerPieces := make([]abi.PieceInfo, 1)
-	unpaddedSize := abi.PaddedPieceSize(ssize).Unpadded()
-	ppi, err := m.sealer.AddPiece(
-		sector.sealingCtx(ctx.Context()),
-		m.minerSector(sector.SectorType, sector.SectorNumber),
-		existing,
-		unpaddedSize,
-		NewNullReader(unpaddedSize),
-	)
-	if err != nil {
-		return err
-	}
-	fillerPieces[0] = ppi
-
-	if sector.Recovering {
-		// if in recovering phase, go to p1 directly.
-		log.Infof("octopus: recovering: SectorPackedForRecovery event")
-		return ctx.Send(SectorPackedForRecovery{FillerPieces: fillerPieces})
-	} else {
-		return ctx.Send(SectorPacked{FillerPieces: fillerPieces})
-	}
-}
-
-func (m *Sealing) handleRecover(ctx statemachine.Context, sector SectorInfo) error {
-	if sector.hasDeals() {
-		// TODO: consider how to support recover deal
-		log.Error("octopus: recovering: unsupport recovery deal sector.")
-		return nil
-	} else {
-		return ctx.Send(SectorCCRecovery{})
-	}
-}
 
 func (m *Sealing) handlePacking(ctx statemachine.Context, sector SectorInfo) error {
 	m.inputLk.Lock()
@@ -157,7 +93,7 @@ func (m *Sealing) padSector(ctx context.Context, sectorID storage.SectorRef, exi
 	for i, size := range sizes {
 		expectCid := zerocomm.ZeroPieceCommitment(size)
 
-		ppi, err := m.sealer.AddPiece(context.WithValue(ctx, "isCC", false), sectorID, existingPieceSizes, size, NewNullReader(size))
+		ppi, err := m.sealer.AddPiece(ctx, sectorID, existingPieceSizes, size, NewNullReader(size))
 		if err != nil {
 			return nil, xerrors.Errorf("add piece: %w", err)
 		}
@@ -174,15 +110,7 @@ func (m *Sealing) padSector(ctx context.Context, sectorID storage.SectorRef, exi
 }
 
 func checkTicketExpired(ticket, head abi.ChainEpoch) bool {
-	sealDuration := abi.ChainEpoch(0)
-	sealDurationString := os.Getenv("P1P2_DURATION_EPOCHS")
-	if sealDurationString != "" {
-		sd, err := strconv.Atoi(sealDurationString)
-		if err == nil {
-			sealDuration = abi.ChainEpoch(sd)
-		}
-	}
-	return head+sealDuration-ticket > MaxTicketAge // TODO: allow configuring expected seal durations
+	return head-ticket > MaxTicketAge // TODO: allow configuring expected seal durations
 }
 
 func checkProveCommitExpired(preCommitEpoch, msd abi.ChainEpoch, currEpoch abi.ChainEpoch) bool {
@@ -280,7 +208,7 @@ func (m *Sealing) handlePreCommit1(ctx statemachine.Context, sector SectorInfo) 
 		case *ErrInvalidDeals:
 			log.Warnf("invalid deals in sector %d: %v", sector.SectorNumber, err)
 			return ctx.Send(SectorInvalidDealIDs{Return: RetPreCommit1})
-		case *ErrExpiredDeals: // Probably not much we can do here, maybe re-pack the secto10r?
+		case *ErrExpiredDeals: // Probably not much we can do here, maybe re-pack the sector?
 			return ctx.Send(SectorDealsExpired{xerrors.Errorf("expired dealIDs in sector: %w", err)})
 		default:
 			return xerrors.Errorf("checkPieces sanity check error: %w", err)
@@ -293,53 +221,37 @@ func (m *Sealing) handlePreCommit1(ctx statemachine.Context, sector SectorInfo) 
 		return nil
 	}
 
-	//if sector.SectorNumber == abi.SectorNumber(253) || sector.SectorNumber == abi.SectorNumber(254) || sector.SectorNumber == abi.SectorNumber(255) || sector.SectorNumber == abi.SectorNumber(256) || sector.SectorNumber == abi.SectorNumber(257) || sector.SectorNumber == abi.SectorNumber(258) || sector.SectorNumber == abi.SectorNumber(259) {
-	//	log.Infof("sector %v ignore ticket check", sector.SectorNumber)
-	//	pc1o, err := m.sealer.SealPreCommit1(sector.sealingCtx(ctx.Context()), m.minerSector(sector.SectorType, sector.SectorNumber), sector.TicketValue, sector.pieceInfos())
-	//	if err != nil {
-	//		return ctx.Send(SectorSealPreCommit1Failed{xerrors.Errorf("seal pre commit(1) failed: %w", err)})
-	//	}
-	//
-	//	return ctx.Send(SectorPreCommit1{
-	//		PreCommit1Out: pc1o,
-	//	})
-	//}
 	if checkTicketExpired(sector.TicketEpoch, height) {
-		if !sector.Recovering {
-			pci, err := m.Api.StateSectorPreCommitInfo(ctx.Context(), m.maddr, sector.SectorNumber, tok)
-			if err != nil {
-				log.Errorf("handlePreCommit1: StateSectorPreCommitInfo: api error, not proceeding: %+v", err)
-				return nil
-			}
+		pci, err := m.Api.StateSectorPreCommitInfo(ctx.Context(), m.maddr, sector.SectorNumber, tok)
+		if err != nil {
+			log.Errorf("handlePreCommit1: StateSectorPreCommitInfo: api error, not proceeding: %+v", err)
+			return nil
+		}
 
-			if pci == nil {
-				return ctx.Send(SectorOldTicket{}) // go get new ticket
-			}
+		if pci == nil {
+			return ctx.Send(SectorOldTicket{}) // go get new ticket
+		}
 
-			nv, err := m.Api.StateNetworkVersion(ctx.Context(), tok)
-			if err != nil {
-				log.Errorf("handlePreCommit1: StateNetworkVersion: api error, not proceeding: %+v", err)
-				return nil
-			}
+		nv, err := m.Api.StateNetworkVersion(ctx.Context(), tok)
+		if err != nil {
+			log.Errorf("handlePreCommit1: StateNetworkVersion: api error, not proceeding: %+v", err)
+			return nil
+		}
 
-			av, err := actors.VersionForNetwork(nv)
-			if err != nil {
-				log.Errorf("handlePreCommit1: VersionForNetwork error, not proceeding: %w", err)
-				return nil
-			}
-			msd, err := policy.GetMaxProveCommitDuration(av, sector.SectorType)
-			if err != nil {
-				log.Errorf("handlePreCommit1: GetMaxProveCommitDuration error, not proceeding: %w", err)
-				return nil
-			}
+		av, err := actors.VersionForNetwork(nv)
+		if err != nil {
+			log.Errorf("handlePreCommit1: VersionForNetwork error, not proceeding: %w", err)
+			return nil
+		}
+		msd, err := policy.GetMaxProveCommitDuration(av, sector.SectorType)
+		if err != nil {
+			log.Errorf("handlePreCommit1: GetMaxProveCommitDuration error, not proceeding: %w", err)
+			return nil
+		}
 
-			// if height >  PreCommitEpoch + msd, there is no need to recalculate
-			if checkProveCommitExpired(pci.PreCommitEpoch, msd, height) {
-				return ctx.Send(SectorOldTicket{}) // will be removed
-			}
-		} else {
-			// 恢复时忽略expire过期。
-			log.Infof("octopus: recovering: sector %v is expired. continue to p1", sector.SectorNumber)
+		// if height >  PreCommitEpoch + msd, there is no need to recalculate
+		if checkProveCommitExpired(pci.PreCommitEpoch, msd, height) {
+			return ctx.Send(SectorOldTicket{}) // will be removed
 		}
 	}
 
@@ -356,40 +268,11 @@ func (m *Sealing) handlePreCommit1(ctx statemachine.Context, sector SectorInfo) 
 func (m *Sealing) handlePreCommit2(ctx statemachine.Context, sector SectorInfo) error {
 	cids, err := m.sealer.SealPreCommit2(sector.sealingCtx(ctx.Context()), m.minerSector(sector.SectorType, sector.SectorNumber), sector.PreCommit1Out)
 	if err != nil {
-		if strings.Contains(err.Error(), "check rounds") {
-			log.Errorf("octopus: sector %v: verify PreCommit2 result error: %v", sector.SectorNumber, err)
-			return ctx.Send(SectorSealPreCommit1Failed{xerrors.Errorf("seal pre commit(2) verify failed: %w", err)})
-		}
 		return ctx.Send(SectorSealPreCommit2Failed{xerrors.Errorf("seal pre commit(2) failed: %w", err)})
 	}
 
 	if cids.Unsealed == cid.Undef {
 		return ctx.Send(SectorSealPreCommit1Failed{xerrors.Errorf("seal pre commit(2) returned undefined CommD")})
-	}
-
-	// log.Infof("sector %v p2 unsealedCid=%v sealedCid=%v", sector.SectorNumber, cids.Unsealed, cids.Sealed)
-	// err = m.verifyPreCommit2Result(ctx, sector, cids)
-	// if err != nil {
-	// 	log.Errorf("octopus: sector %v: verify PreCommit2 result error: %v", sector.SectorNumber, err)
-	// 	return ctx.Send(SectorSealPreCommit1Failed{xerrors.Errorf("seal pre commit(2) verify failed: %w", err)})
-	// }
-
-	//if sector.SectorNumber == abi.SectorNumber(253) || sector.SectorNumber == abi.SectorNumber(254) || sector.SectorNumber == abi.SectorNumber(255) || sector.SectorNumber == abi.SectorNumber(256) || sector.SectorNumber == abi.SectorNumber(257) || sector.SectorNumber == abi.SectorNumber(258) || sector.SectorNumber == abi.SectorNumber(259) {
-	//	log.Infof("sector %v p2 finish. wait", sector.SectorNumber)
-	//	return nil
-	//}
-
-	// 检查恢复是否和链上一致。
-	if sector.Recovering {
-		sealedCID, err := m.getOnChainSealedCid(ctx.Context(), sector.SectorNumber)
-		if err != nil {
-			return ctx.Send(SectorSealPreCommit2Failed{xerrors.Errorf("seal pre commit(2) recover failed, can not get onchain info, %+v", err)})
-		}
-		if cids.Sealed != sealedCID {
-			return ctx.Send(SectorSealPreCommit2Failed{xerrors.Errorf("seal pre commit(2) recover failed, cids are not the same, require %v, got %v", sealedCID, cids.Sealed)})
-		} else {
-			return ctx.Send(SectorRecovered{})
-		}
 	}
 
 	return ctx.Send(SectorPreCommit2{
@@ -398,19 +281,6 @@ func (m *Sealing) handlePreCommit2(ctx statemachine.Context, sector SectorInfo) 
 	})
 }
 
-// TODO: 仅支持Proving后的扇
-func (m *Sealing) getOnChainSealedCid(ctx context.Context, sectorId abi.SectorNumber) (cid.Cid, error) {
-	tok, _, err := m.Api.ChainHead(ctx)
-	if err != nil {
-		return cid.Undef, err
-	}
-
-	onChainInfo, err := m.Api.StateSectorGetInfo(ctx, m.maddr, sectorId, tok)
-	if err != nil {
-		return cid.Undef, err
-	}
-	return onChainInfo.SealedCID, nil
-}
 func (m *Sealing) preCommitParams(ctx statemachine.Context, sector SectorInfo) (*miner.SectorPreCommitInfo, big.Int, TipSetToken, error) {
 	tok, height, err := m.Api.ChainHead(ctx.Context())
 	if err != nil {
@@ -618,24 +488,20 @@ func (m *Sealing) handleWaitSeed(ctx statemachine.Context, sector SectorInfo) er
 
 	pci, err := m.Api.StateSectorPreCommitInfo(ctx.Context(), m.maddr, sector.SectorNumber, tok)
 	if err != nil {
-		log.Errorf("octopus: getting precommit info: %w", err)
 		return xerrors.Errorf("getting precommit info: %w", err)
 	}
 	if pci == nil {
-		log.Error("octopus: precommit info not found on chain")
 		return ctx.Send(SectorChainPreCommitFailed{error: xerrors.Errorf("precommit info not found on chain")})
 	}
 
 	randHeight := pci.PreCommitEpoch + policy.GetPreCommitChallengeDelay()
 
 	err = m.events.ChainAt(func(ectx context.Context, _ TipSetToken, curH abi.ChainEpoch) error {
-		log.Infof("octopus: %v: sector no %v: ChainAt Handle", sector.SectorNumber, curH)
 		// in case of null blocks the randomness can land after the tipset we
 		// get from the events API
 		tok, _, err := m.Api.ChainHead(ctx.Context())
 		if err != nil {
-			log.Errorf("handleWaitSeed: api error, not proceeding: %+v", err)
-			log.Errorf("handleWaitSeed: sector no %v: api error, not proceeding: %+v", sector.SectorNumber, err)
+			log.Errorf("handleCommitting: api error, not proceeding: %+v", err)
 			return nil
 		}
 
@@ -646,25 +512,21 @@ func (m *Sealing) handleWaitSeed(ctx statemachine.Context, sector SectorInfo) er
 		rand, err := m.Api.StateGetRandomnessFromBeacon(ectx, crypto.DomainSeparationTag_InteractiveSealChallengeSeed, randHeight, buf.Bytes(), tok)
 		if err != nil {
 			err = xerrors.Errorf("failed to get randomness for computing seal proof (ch %d; rh %d; tsk %x): %w", curH, randHeight, tok, err)
-			log.Errorf("octopus: sector no %v: failed to get randomness for computing seal proof (ch %d; rh %d; tsk %x): %w", sector.SectorNumber, curH, randHeight, tok, err)
 
 			_ = ctx.Send(SectorChainPreCommitFailed{error: err})
 			return err
 		}
 
-		log.Debugf("octopus: sector no %v: send SectorSeedReady", sector.SectorNumber)
 		_ = ctx.Send(SectorSeedReady{SeedValue: abi.InteractiveSealRandomness(rand), SeedEpoch: randHeight})
 
 		return nil
 	}, func(ctx context.Context, ts TipSetToken) error {
 		log.Warn("revert in interactive commit sector step")
-		log.Warnf("octopus: sector no %v: revert in interactive commit sector step", sector.SectorNumber)
 		// TODO: need to cancel running process and restart...
 		return nil
 	}, InteractivePoRepConfidence, randHeight)
 	if err != nil {
 		log.Warn("waitForPreCommitMessage ChainAt errored: ", err)
-		log.Warnf("octopus: sector no %v: waitForPreCommitMessage ChainAt errored: ", sector.SectorNumber, err)
 	}
 
 	return nil
@@ -704,8 +566,7 @@ func (m *Sealing) handleCommitting(ctx statemachine.Context, sector SectorInfo) 
 	}
 	c2in, err := m.sealer.SealCommit1(sector.sealingCtx(ctx.Context()), m.minerSector(sector.SectorType, sector.SectorNumber), sector.TicketValue, sector.SeedValue, sector.pieceInfos(), cids)
 	if err != nil {
-		//return ctx.Send(SectorComputeProofFailed{xerrors.Errorf("computing seal proof failed(1): %w", err)})
-		return ctx.Send(SectorCommit1Failed{xerrors.Errorf("computing seal proof failed(1): %w", err)})
+		return ctx.Send(SectorComputeProofFailed{xerrors.Errorf("computing seal proof failed(1): %w", err)})
 	}
 
 	proof, err := m.sealer.SealCommit2(sector.sealingCtx(ctx.Context()), m.minerSector(sector.SectorType, sector.SectorNumber), c2in)
@@ -721,13 +582,7 @@ func (m *Sealing) handleCommitting(ctx statemachine.Context, sector SectorInfo) 
 		}
 
 		if err := m.checkCommit(ctx.Context(), sector, proof, tok); err != nil {
-			switch err.(type) {
-			case *ErrUnmatchCommR:
-				log.Errorf("octopus: checkCommit failed: unmatch commR, remove sector %v.", sector.SectorNumber)
-				return ctx.Send(SectorRemove{})
-			default:
-				return ctx.Send(SectorCommitFailed{xerrors.Errorf("commit check error: %w", err)})
-			}
+			return ctx.Send(SectorCommitFailed{xerrors.Errorf("commit check error: %w", err)})
 		}
 	}
 
@@ -818,17 +673,6 @@ func (m *Sealing) handleSubmitCommit(ctx statemachine.Context, sector SectorInfo
 	// TODO: check seed / ticket / deals are up to date
 	mcid, err := m.Api.SendMsg(ctx.Context(), from, m.maddr, builtin.MethodsMiner.ProveCommitSector, collateral, big.Int(m.feeCfg.MaxCommitGasFee), enc.Bytes())
 	if err != nil {
-		if strings.Contains(err.Error(), "failed to submit proof for bulk verification") {
-			log.Errorf("octopus: may be caused by 'attempting to prove commit over 200 sectors in epoch', retry sumbit commit")
-			return ctx.Send(SectorCommitSubmitFailed{err})
-		}
-		if strings.Contains(err.Error(), "too many pending prove message") {
-			log.Errorf("octopus: may be caused by 'too many pending prove message', retry sumbit commit")
-			return ctx.Send(SectorCommitSubmitFailed{err})
-		}
-		if strings.Contains(err.Error(), "websocket connection closed") {
-			return ctx.Send(SectorCommitSubmitFailed{err})
-		}
 		return ctx.Send(SectorCommitFailed{xerrors.Errorf("pushing message to mpool: %w", err)})
 	}
 
@@ -869,14 +713,6 @@ func (m *Sealing) handleSubmitCommitAggregate(ctx statemachine.Context, sector S
 	}
 
 	if e, found := res.FailedSectors[sector.SectorNumber]; found {
-		if strings.Contains(e, "failed to submit proof for bulk verification") {
-			log.Errorf("octopus: may be caused by 'attempting to prove commit over 200 sectors in epoch', retry sumbit commit")
-			return ctx.Send(SectorCommitSubmitFailed{xerrors.Errorf("sector failed in aggregate processing: %s", e)})
-		}
-		if strings.Contains(e, "too many pending prove message") {
-			log.Errorf("octopus: may be caused by 'too many pending prove message', retry sumbit commit")
-			return ctx.Send(SectorCommitSubmitFailed{xerrors.Errorf("sector failed in aggregate processing: %s", e)})
-		}
 		return ctx.Send(SectorCommitFailed{xerrors.Errorf("sector failed in aggregate processing: %s", e)})
 	}
 
@@ -902,8 +738,6 @@ func (m *Sealing) handleCommitWait(ctx statemachine.Context, sector SectorInfo) 
 	case exitcode.Ok:
 		// this is what we expect
 	case exitcode.SysErrInsufficientFunds:
-		fallthrough
-	case exitcode.FirstActorSpecificExitCode:
 		fallthrough
 	case exitcode.SysErrOutOfGas:
 		// gas estimator guessed a wrong number / out of funds
@@ -931,16 +765,12 @@ func (m *Sealing) handleFinalizeSector(ctx statemachine.Context, sector SectorIn
 		return xerrors.Errorf("getting sealing config: %w", err)
 	}
 
-	if sector.FinalizedTimes == 0 {
-		if err := m.sealer.FinalizeSector(sector.sealingCtx(ctx.Context()), m.minerSector(sector.SectorType, sector.SectorNumber), sector.keepUnsealedRanges(sector.Pieces, false, cfg.AlwaysKeepUnsealedCopy)); err != nil {
-			return ctx.Send(SectorFinalizeFailed{xerrors.Errorf("finalize sector: %w", err)})
-		}
-	} else {
-		log.Infof("octopus: sector %v has been finalized %d times, skip.", sector.SectorNumber, sector.FinalizedTimes)
+	if err := m.sealer.FinalizeSector(sector.sealingCtx(ctx.Context()), m.minerSector(sector.SectorType, sector.SectorNumber), sector.keepUnsealedRanges(sector.Pieces, false, cfg.AlwaysKeepUnsealedCopy)); err != nil {
+		return ctx.Send(SectorFinalizeFailed{xerrors.Errorf("finalize sector: %w", err)})
 	}
+
 	if cfg.MakeCCSectorsAvailable && !sector.hasDeals() {
 		return ctx.Send(SectorFinalizedAvailable{})
 	}
-
 	return ctx.Send(SectorFinalized{})
 }

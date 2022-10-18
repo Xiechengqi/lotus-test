@@ -2,7 +2,6 @@ package node
 
 import (
 	"errors"
-	"github.com/go-redis/redis/v8"
 	"time"
 
 	"go.uber.org/fx"
@@ -76,6 +75,7 @@ func ConfigStorageMiner(c interface{}) Option {
 	enableLibp2pNode := cfg.Subsystems.EnableMarkets // we enable libp2p nodes if the storage market subsystem is enabled, otherwise we don't
 
 	return Options(
+
 		// Needed to instantiate pubsub used by index provider via ConfigCommon
 		Override(new(dtypes.DrandSchedule), modules.BuiltinDrandConfig),
 		Override(new(dtypes.BootstrapPeers), modules.BuiltinBootstrap),
@@ -90,8 +90,6 @@ func ConfigStorageMiner(c interface{}) Option {
 		Override(new(*stores.Remote), modules.RemoteStorage),
 		Override(new(stores.Store), From(new(*stores.Remote))),
 		Override(new(dtypes.RetrievalPricingFunc), modules.RetrievalPricingFunc(cfg.Dealmaking)),
-
-		Override(new(*redis.ClusterClient), modules.RedisClient()),
 
 		If(!cfg.Subsystems.EnableMining,
 			If(cfg.Subsystems.EnableSealing, Error(xerrors.Errorf("sealing can only be enabled on a mining node"))),
@@ -120,14 +118,12 @@ func ConfigStorageMiner(c interface{}) Option {
 			Override(new(*storage.Miner), modules.StorageMiner(cfg.Fees)),
 			Override(new(*storage.WindowPoStScheduler), modules.WindowPostScheduler(cfg.Fees, cfg.Proving)),
 			Override(new(sectorblocks.SectorBuilder), From(new(*storage.Miner))),
-			Override(new(sectorblocks.AllSectorBuilders), modules.AllSectorBuilders),
 		),
 
 		If(cfg.Subsystems.EnableSectorStorage,
 			// Sector storage
-			//Override(new(*stores.Index), stores.NewIndex),
-			Override(new(*stores.RedisIndex), stores.NewRedisIndex),
-			Override(new(stores.SectorIndex), From(new(*stores.RedisIndex))),
+			Override(new(*stores.Index), stores.NewIndex),
+			Override(new(stores.SectorIndex), From(new(*stores.Index))),
 			Override(new(*sectorstorage.Manager), modules.SectorStorage),
 			Override(new(sectorstorage.Unsealer), From(new(*sectorstorage.Manager))),
 			Override(new(sectorstorage.SectorManager), From(new(*sectorstorage.Manager))),
@@ -139,7 +135,6 @@ func ConfigStorageMiner(c interface{}) Option {
 			Override(new(modules.MinerStorageService), modules.ConnectStorageService(cfg.Subsystems.SectorIndexApiInfo)),
 			Override(new(sectorstorage.Unsealer), From(new(modules.MinerStorageService))),
 			Override(new(sectorblocks.SectorBuilder), From(new(modules.MinerStorageService))),
-			Override(new(sectorblocks.AllSectorBuilders), modules.ConnectStorageServices(cfg.Subsystems.SectorIndexApiInfos)),
 		),
 		If(!cfg.Subsystems.EnableSealing,
 			Override(new(modules.MinerSealingService), modules.ConnectSealingService(cfg.Subsystems.SealerApiInfo)),

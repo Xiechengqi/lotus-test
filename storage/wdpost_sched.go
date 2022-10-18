@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"github.com/filecoin-project/lotus/octopus"
 	"time"
 
 	"golang.org/x/xerrors"
@@ -53,7 +52,7 @@ type WindowPoStScheduler struct {
 }
 
 // NewWindowedPoStScheduler creates a new WindowPoStScheduler scheduler.
-func NewWindowedPoStScheduler(api *octopus.FullNodePool,
+func NewWindowedPoStScheduler(api fullNodeFilteredAPI,
 	cfg config.MinerFeeConfig,
 	pcfg config.ProvingConfig,
 	as *AddressSelector,

@@ -4,10 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"strconv"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/filecoin-project/go-state-types/proof"
@@ -30,8 +26,6 @@ func (w WorkerID) String() string {
 type WorkerInfo struct {
 	Hostname string
 
-	TaskResourcesLk sync.Mutex
-	TaskResources   map[sealtasks.TaskType]*TaskConfig
 	// IgnoreResources indicates whether the worker's available resources should
 	// be used ignored (true) or used (false) for the purposes of scheduling and
 	// task assignment. Only supported on local workers. Used for testing.
@@ -109,17 +103,6 @@ type WorkerJob struct {
 	Hostname string `json:",omitempty"` // optional, set for ret-wait jobs
 }
 
-type WorkerAbility struct {
-	WorkerId      uuid.UUID
-	Hostname      string
-	TaskAbilities []TaskAbility
-}
-type TaskAbility struct {
-	Task  sealtasks.TaskType
-	Limit int
-	Run   int
-}
-
 type CallID struct {
 	Sector abi.SectorID
 	ID     uuid.UUID
@@ -174,8 +157,6 @@ type FallbackChallenges struct {
 	Sectors    []abi.SectorNumber
 	Challenges map[abi.SectorNumber][]uint64
 }
-
-const NotEnoughSpace string = "not enough disk space, hold on new sealing jobs..."
 
 type ErrorCode int
 
@@ -235,111 +216,4 @@ type WorkerReturn interface {
 	ReturnUnsealPiece(ctx context.Context, callID CallID, err *CallError) error
 	ReturnReadPiece(ctx context.Context, callID CallID, ok bool, err *CallError) error
 	ReturnFetch(ctx context.Context, callID CallID, err *CallError) error
-}
-
-type TaskConfig struct {
-	LimitCount int
-	RunCount   int
-}
-
-func NewTaskLimitConfig() map[sealtasks.TaskType]*TaskConfig {
-	ability := ""
-	if env, ok := os.LookupEnv("ABILITY"); ok {
-		ability = strings.Replace(string(env), " ", "", -1) // 去除空格
-		ability = strings.Replace(ability, "\n", "", -1)    // 去除换行符
-	}
-	splitArr := strings.Split(ability, ",")
-	cfgResources := make(map[sealtasks.TaskType]*TaskConfig)
-	cfgResources[sealtasks.TTAddPiece] = &TaskConfig{
-		LimitCount: 1,
-		RunCount:   0,
-	}
-
-	for _, part := range splitArr {
-		if strings.Contains(part, "PC2C2:") {
-			splitPart := strings.Split(part, ":")
-			if intCount, err := strconv.Atoi(splitPart[1]); err == nil {
-				if _, ok := cfgResources[sealtasks.TTAnyOfPC2C2]; !ok {
-					cfgResources[sealtasks.TTAnyOfPC2C2] = &TaskConfig{
-						LimitCount: intCount,
-						RunCount:   0,
-					}
-				}
-			}
-		} else if strings.Contains(part, "PC1:") {
-			splitPart := strings.Split(part, ":")
-			if intCount, err := strconv.Atoi(splitPart[1]); err == nil {
-				if _, ok := cfgResources[sealtasks.TTPreCommit1]; !ok {
-					cfgResources[sealtasks.TTPreCommit1] = &TaskConfig{
-						LimitCount: intCount,
-						RunCount:   0,
-					}
-				}
-			}
-		} else if strings.Contains(part, "PC2:") {
-			splitPart := strings.Split(part, ":")
-			if intCount, err := strconv.Atoi(splitPart[1]); err == nil {
-				if _, ok := cfgResources[sealtasks.TTPreCommit2]; !ok {
-					cfgResources[sealtasks.TTPreCommit2] = &TaskConfig{
-						LimitCount: intCount,
-						RunCount:   0,
-					}
-				}
-			}
-		} else if strings.Contains(part, "C2:") {
-			splitPart := strings.Split(part, ":")
-			if intCount, err := strconv.Atoi(splitPart[1]); err == nil {
-				if _, ok := cfgResources[sealtasks.TTCommit2]; !ok {
-					cfgResources[sealtasks.TTCommit2] = &TaskConfig{
-						LimitCount: intCount,
-						RunCount:   0,
-					}
-				}
-			}
-		} else if strings.Contains(part, "RU:") {
-			splitPart := strings.Split(part, ":")
-			if intCount, err := strconv.Atoi(splitPart[1]); err == nil {
-				if _, ok := cfgResources[sealtasks.TTReplicaUpdate]; !ok {
-					cfgResources[sealtasks.TTReplicaUpdate] = &TaskConfig{
-						LimitCount: intCount,
-						RunCount:   0,
-					}
-				}
-			}
-		} else if strings.Contains(part, "PR1:") {
-			splitPart := strings.Split(part, ":")
-			if intCount, err := strconv.Atoi(splitPart[1]); err == nil {
-				if _, ok := cfgResources[sealtasks.TTProveReplicaUpdate1]; !ok {
-					cfgResources[sealtasks.TTProveReplicaUpdate1] = &TaskConfig{
-						LimitCount: intCount,
-						RunCount:   0,
-					}
-				}
-			}
-		} else if strings.Contains(part, "PR2:") {
-			splitPart := strings.Split(part, ":")
-			if intCount, err := strconv.Atoi(splitPart[1]); err == nil {
-				if _, ok := cfgResources[sealtasks.TTProveReplicaUpdate2]; !ok {
-					cfgResources[sealtasks.TTProveReplicaUpdate2] = &TaskConfig{
-						LimitCount: intCount,
-						RunCount:   0,
-					}
-				}
-			}
-		} else if strings.Contains(part, "AP:") {
-			splitPart := strings.Split(part, ":")
-			if intCount, err := strconv.Atoi(splitPart[1]); err == nil {
-				if _, ok := cfgResources[sealtasks.TTAddPiece]; !ok {
-					cfgResources[sealtasks.TTAddPiece] = &TaskConfig{
-						LimitCount: intCount,
-						RunCount:   0,
-					}
-				} else {
-					cfgResources[sealtasks.TTAddPiece].LimitCount = intCount
-				}
-			}
-		}
-	}
-
-	return cfgResources
 }

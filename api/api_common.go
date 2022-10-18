@@ -53,14 +53,6 @@ type Common interface {
 	Session(context.Context) (uuid.UUID, error) //perm:read
 
 	Closing(context.Context) (<-chan struct{}, error) //perm:read
-
-	GetEnv(ctx context.Context, v string) (string, error) // perm:read
-
-	GetAllEnv(ctx context.Context) (map[string]string, error) // perm:read
-
-	SetEnv(ctx context.Context, v string, vv string) error // perm:read
-
-	DecodeBitField(ctx context.Context, val string) ([]uint64, error) // perm:read
 }
 
 // APIVersion provides various build-time information

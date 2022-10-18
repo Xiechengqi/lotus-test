@@ -1,7 +1,5 @@
 package sealing
 
-import "os"
-
 type SectorState string
 
 var ExistSectorStateList = map[SectorState]struct{}{
@@ -65,10 +63,6 @@ var ExistSectorStateList = map[SectorState]struct{}{
 	ReleaseSectorKeyFailed:      {},
 	FinalizeReplicaUpdateFailed: {},
 	AbortUpgrade:                {},
-	// octopus:
-	ZeroPacking:   {},
-	Commit1Failed: {},
-	Recovery:      {},
 }
 
 // cmd/lotus-miner/info.go defines CLI colors corresponding to these states
@@ -77,15 +71,13 @@ const (
 	UndefinedSectorState SectorState = ""
 
 	// happy path
-	Empty     SectorState = "Empty"     // deprecated
-	WaitDeals SectorState = "WaitDeals" // waiting for more pieces (deals) to be added to the sector
-	AddPiece  SectorState = "AddPiece"  // put deal data (and padding if required) into the sector
-	Packing   SectorState = "Packing"   // sector not in sealStore, and not on chain
-	// octopus
-	ZeroPacking SectorState = "ZeroPacking"
-	GetTicket   SectorState = "GetTicket"  // generate ticket
-	PreCommit1  SectorState = "PreCommit1" // do PreCommit1
-	PreCommit2  SectorState = "PreCommit2" // do PreCommit2
+	Empty      SectorState = "Empty"      // deprecated
+	WaitDeals  SectorState = "WaitDeals"  // waiting for more pieces (deals) to be added to the sector
+	AddPiece   SectorState = "AddPiece"   // put deal data (and padding if required) into the sector
+	Packing    SectorState = "Packing"    // sector not in sealStore, and not on chain
+	GetTicket  SectorState = "GetTicket"  // generate ticket
+	PreCommit1 SectorState = "PreCommit1" // do PreCommit1
+	PreCommit2 SectorState = "PreCommit2" // do PreCommit2
 
 	PreCommitting SectorState = "PreCommitting" // on chain pre-commit
 	PreCommitWait SectorState = "PreCommitWait" // waiting for precommit to land on chain
@@ -122,7 +114,6 @@ const (
 	ReleaseSectorKey      SectorState = "ReleaseSectorKey"
 
 	// error modes
-	Commit1Failed        SectorState = "Commit1Failed"
 	FailedUnrecoverable  SectorState = "FailedUnrecoverable"
 	AddPieceFailed       SectorState = "AddPieceFailed"
 	SealPreCommit1Failed SectorState = "SealPreCommit1Failed"
@@ -130,7 +121,6 @@ const (
 	PreCommitFailed      SectorState = "PreCommitFailed"
 	ComputeProofFailed   SectorState = "ComputeProofFailed"
 	CommitFailed         SectorState = "CommitFailed"
-	SubmitCommitFailed   SectorState = "SubmitCommitFailed"
 	PackingFailed        SectorState = "PackingFailed" // TODO: deprecated, remove
 	FinalizeFailed       SectorState = "FinalizeFailed"
 	DealsExpired         SectorState = "DealsExpired"
@@ -157,47 +147,24 @@ const (
 	Removing     SectorState = "Removing"
 	RemoveFailed SectorState = "RemoveFailed"
 	Removed      SectorState = "Removed"
-
-	Recovery SectorState = "Recovery"
 )
 
 func toStatState(st SectorState, finEarly bool) statSectorState {
-	stagedIncludeAddPieceFailed := os.Getenv("STAGED_INCLUDE_ADD_PIECE_FAILED")
-	if stagedIncludeAddPieceFailed == "true" {
-		switch st {
-		case UndefinedSectorState, Empty, WaitDeals, AddPiece, AddPieceFailed, SnapDealsWaitDeals, SnapDealsAddPiece:
-			return sstStaging
-		case ZeroPacking, Packing, GetTicket, PreCommit1, PreCommit2, PreCommitting, PreCommitWait, SubmitPreCommitBatch, PreCommitBatchWait, WaitSeed, Committing, CommitFinalize, FinalizeSector, Recovery, SnapDealsPacking, UpdateReplica, ProveReplicaUpdate, FinalizeReplicaUpdate:
-			return sstSealing
-		case SubmitCommit, CommitWait, SubmitCommitAggregate, CommitAggregateWait, SubmitReplicaUpdate, ReplicaUpdateWait:
-			if finEarly {
-				// we use statSectorState for throttling storage use. With FinalizeEarly
-				// we can consider sectors in states after CommitFinalize as finalized, so
-				// that more sectors can enter the sealing pipeline (and later be aggregated together)
-				return sstProving
-			}
-			return sstSealing
-		case Proving, Available, UpdateActivating, ReleaseSectorKey, Removed, Removing, Terminating, TerminateWait, TerminateFinality, TerminateFailed:
-			return sstProving
-		}
-	} else {
-		switch st {
-		case UndefinedSectorState, Empty, WaitDeals, AddPiece, SnapDealsWaitDeals, SnapDealsAddPiece:
-			return sstStaging
-		case ZeroPacking, Packing, GetTicket, PreCommit1, PreCommit2, PreCommitting, PreCommitWait, SubmitPreCommitBatch, PreCommitBatchWait, WaitSeed, Committing, CommitFinalize, FinalizeSector, Recovery, SnapDealsPacking, UpdateReplica, ProveReplicaUpdate, FinalizeReplicaUpdate:
-			return sstSealing
-		case SubmitCommit, CommitWait, SubmitCommitAggregate, CommitAggregateWait, SubmitReplicaUpdate, ReplicaUpdateWait:
-			if finEarly {
-				// we use statSectorState for throttling storage use. With FinalizeEarly
-				// we can consider sectors in states after CommitFinalize as finalized, so
-				// that more sectors can enter the sealing pipeline (and later be aggregated together)
-				return sstProving
-			}
-			return sstSealing
-		case Proving, Available, UpdateActivating, ReleaseSectorKey, Removed, Removing, Terminating, TerminateWait, TerminateFinality, TerminateFailed:
+	switch st {
+	case UndefinedSectorState, Empty, WaitDeals, AddPiece, AddPieceFailed, SnapDealsWaitDeals, SnapDealsAddPiece:
+		return sstStaging
+	case Packing, GetTicket, PreCommit1, PreCommit2, PreCommitting, PreCommitWait, SubmitPreCommitBatch, PreCommitBatchWait, WaitSeed, Committing, CommitFinalize, FinalizeSector, SnapDealsPacking, UpdateReplica, ProveReplicaUpdate, FinalizeReplicaUpdate:
+		return sstSealing
+	case SubmitCommit, CommitWait, SubmitCommitAggregate, CommitAggregateWait, SubmitReplicaUpdate, ReplicaUpdateWait:
+		if finEarly {
+			// we use statSectorState for throttling storage use. With FinalizeEarly
+			// we can consider sectors in states after CommitFinalize as finalized, so
+			// that more sectors can enter the sealing pipeline (and later be aggregated together)
 			return sstProving
 		}
 		return sstSealing
+	case Proving, Available, UpdateActivating, ReleaseSectorKey, Removed, Removing, Terminating, TerminateWait, TerminateFinality, TerminateFailed:
+		return sstProving
 	}
 
 	return sstFailed

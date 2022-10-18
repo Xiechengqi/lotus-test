@@ -3,7 +3,6 @@ package sealing
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
@@ -11,7 +10,6 @@ import (
 
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-bitfield"
-	"github.com/go-redis/redis/v8"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 
@@ -35,8 +33,6 @@ import (
 	"github.com/filecoin-project/lotus/extern/sector-storage/ffiwrapper"
 	"github.com/filecoin-project/lotus/extern/storage-sealing/sealiface"
 	"github.com/filecoin-project/lotus/node/config"
-
-	"github.com/bsm/redislock"
 )
 
 const SectorStorePrefix = "/sectors"
@@ -126,9 +122,6 @@ type Sealing struct {
 	commiter    *CommitBatcher
 
 	getConfig GetSealingConfigFunc
-
-	//redisClient *redis.Client
-	redisClient *redis.ClusterClient
 }
 
 type openSector struct {
@@ -169,19 +162,7 @@ type pendingPiece struct {
 	accepted func(abi.SectorNumber, abi.UnpaddedPieceSize, error)
 }
 
-func New(mctx context.Context, api SealingAPI, fc config.MinerFeeConfig, events Events, maddr address.Address, ds datastore.Batching, sealer sectorstorage.SectorManager, sc SectorIDCounter, verif ffiwrapper.Verifier, prov ffiwrapper.Prover, pcp PreCommitPolicy, gc GetSealingConfigFunc, notifee SectorStateNotifee, as AddrSel,
-	redisClient *redis.ClusterClient) *Sealing {
-
-	//redisConn, _ := os.LookupEnv("REDIS_CONN")
-	//redisPassword, _ := os.LookupEnv("REDIS_PASSWORD")
-
-	//log.Infof("octopus: init redis in sealing: %v ******", redisConn)
-	//redisClient := redis.NewClusterClient(&redis.ClusterOptions{
-	//	Addrs:    strings.Split(redisConn, ","),
-	//	Password: redisPassword,
-	//	PoolSize: 1,
-	//})
-
+func New(mctx context.Context, api SealingAPI, fc config.MinerFeeConfig, events Events, maddr address.Address, ds datastore.Batching, sealer sectorstorage.SectorManager, sc SectorIDCounter, verif ffiwrapper.Verifier, prov ffiwrapper.Prover, pcp PreCommitPolicy, gc GetSealingConfigFunc, notifee SectorStateNotifee, as AddrSel) *Sealing {
 	s := &Sealing{
 		Api:      api,
 		DealInfo: &CurrentDealInfoManager{api},
@@ -207,7 +188,7 @@ func New(mctx context.Context, api SealingAPI, fc config.MinerFeeConfig, events 
 
 		terminator:  NewTerminationBatcher(mctx, maddr, api, as, fc, gc),
 		precommiter: NewPreCommitBatcher(mctx, maddr, api, as, fc, gc),
-		commiter:    NewCommitBatcher(mctx, maddr, api, as, fc, gc, prov, redislock.New(redisClient)),
+		commiter:    NewCommitBatcher(mctx, maddr, api, as, fc, gc, prov),
 
 		getConfig: gc,
 
@@ -215,18 +196,10 @@ func New(mctx context.Context, api SealingAPI, fc config.MinerFeeConfig, events 
 			bySector: map[abi.SectorID]SectorState{},
 			byState:  map[SectorState]int64{},
 		},
-
-		redisClient: redisClient,
 	}
 	s.startupWait.Add(1)
 
 	s.sectors = statemachine.New(namespace.Wrap(ds, datastore.NewKey(SectorStorePrefix)), s, SectorInfo{})
-
-	//s.redisClient = redis.NewClient(&redis.Options{
-	//	Addr: redisConn,
-	//	Password: redisPassword,
-	//	DB: 0,
-	//})
 
 	return s
 }
@@ -251,25 +224,16 @@ func (m *Sealing) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (m *Sealing) FindDeal(ctx context.Context, dealId abi.DealID) (string, error) {
-	key := fmt.Sprintf("deal_%v", dealId)
-	value, e := m.redisClient.Get(ctx, key).Result()
-	if e != nil {
-		return "", e
-	}
-	return value, nil
-}
-
 func (m *Sealing) Remove(ctx context.Context, sid abi.SectorNumber) error {
 	m.startupWait.Wait()
 
-	return m.SectorsSend(uint64(sid), SectorRemove{})
+	return m.sectors.Send(uint64(sid), SectorRemove{})
 }
 
 func (m *Sealing) Terminate(ctx context.Context, sid abi.SectorNumber) error {
 	m.startupWait.Wait()
 
-	return m.SectorsSend(uint64(sid), SectorTerminate{})
+	return m.sectors.Send(uint64(sid), SectorTerminate{})
 }
 
 func (m *Sealing) TerminateFlush(ctx context.Context) (*cid.Cid, error) {

@@ -59,16 +59,13 @@ type StorageMiner interface {
 	// Temp api for testing
 	PledgeSector(context.Context) (abi.SectorID, error) //perm:write
 
-	PledgeSectors(ctx context.Context, n int) ([]abi.SectorNumber, error) //perm:write
-	FindDeal(ctx context.Context, dealId abi.DealID) (string, error)      //perm:read
-
 	// Get the status of a given sector by ID
 	SectorsStatus(ctx context.Context, sid abi.SectorNumber, showOnChainInfo bool) (SectorInfo, error) //perm:read
 
 	// Add piece to an open sector. If no sectors with enough space are open,
 	// either a new sector will be created, or this call will block until more
 	// sectors can be created.
-	SectorAddPieceToAny(ctx context.Context, size abi.UnpaddedPieceSize, r storage.Data, d PieceDealInfo, p string) (SectorOffset, error) //perm:admin
+	SectorAddPieceToAny(ctx context.Context, size abi.UnpaddedPieceSize, r storage.Data, d PieceDealInfo) (SectorOffset, error) //perm:admin
 
 	SectorsUnsealPiece(ctx context.Context, sector storage.SectorRef, offset storiface.UnpaddedByteIndex, size abi.UnpaddedPieceSize, randomness abi.SealRandomness, commd *cid.Cid) error //perm:admin
 
@@ -97,9 +94,6 @@ type StorageMiner interface {
 	// SectorGetExpectedSealDuration gets the expected time for a sector to seal
 	SectorGetExpectedSealDuration(context.Context) (time.Duration, error) //perm:read
 	SectorsUpdate(context.Context, abi.SectorNumber, SectorState) error   //perm:admin
-
-	// octopus: recover a certain sector.
-	SectorsRecover(context.Context, abi.SectorNumber) error //perm:admin
 	// SectorRemove removes the sector from storage. It doesn't terminate it on-chain, which can
 	// be done with SectorTerminate. Removing and not terminating live sectors will cause additional penalties.
 	SectorRemove(context.Context, abi.SectorNumber) error                           //perm:admin
@@ -127,11 +121,9 @@ type StorageMiner interface {
 	SectorAbortUpgrade(context.Context, abi.SectorNumber) error //perm:admin
 
 	// WorkerConnect tells the node to connect to workers RPC
-	WorkerConnect(context.Context, string) error                                    //perm:admin retry:true
-	WorkerStats(context.Context) (map[uuid.UUID]storiface.WorkerStats, error)       //perm:admin
-	WorkerJobs(context.Context) (map[uuid.UUID][]storiface.WorkerJob, error)        //perm:admin
-	WorkerSetAbility(ctx context.Context, workerId uuid.UUID, ability string) error //perm:admin
-	WorkerGetAbility(ctx context.Context) ([]storiface.WorkerAbility, error)        //perm:admin
+	WorkerConnect(context.Context, string) error                              //perm:admin retry:true
+	WorkerStats(context.Context) (map[uuid.UUID]storiface.WorkerStats, error) //perm:admin
+	WorkerJobs(context.Context) (map[uuid.UUID][]storiface.WorkerJob, error)  //perm:admin
 
 	//storiface.WorkerReturn
 	ReturnDataCid(ctx context.Context, callID storiface.CallID, pi abi.PieceInfo, err *storiface.CallError) error                                       //perm:admin retry:true
@@ -160,7 +152,6 @@ type StorageMiner interface {
 	StorageAttach(context.Context, storiface.StorageInfo, fsutil.FsStat) error                                                                                             //perm:admin
 	StorageInfo(context.Context, storiface.ID) (storiface.StorageInfo, error)                                                                                              //perm:admin
 	StorageReportHealth(context.Context, storiface.ID, storiface.HealthReport) error                                                                                       //perm:admin
-	StorageDeclareSectors(ctx context.Context, s []abi.SectorID) (map[abi.SectorNumber][]storiface.SectorFileType, error)                                                  //perm:admin
 	StorageDeclareSector(ctx context.Context, storageID storiface.ID, s abi.SectorID, ft storiface.SectorFileType, primary bool) error                                     //perm:admin
 	StorageDropSector(ctx context.Context, storageID storiface.ID, s abi.SectorID, ft storiface.SectorFileType) error                                                      //perm:admin
 	StorageFindSector(ctx context.Context, sector abi.SectorID, ft storiface.SectorFileType, ssize abi.SectorSize, allowFetch bool) ([]storiface.SectorStorageInfo, error) //perm:admin
@@ -168,11 +159,10 @@ type StorageMiner interface {
 	StorageLock(ctx context.Context, sector abi.SectorID, read storiface.SectorFileType, write storiface.SectorFileType) error                                             //perm:admin
 	StorageTryLock(ctx context.Context, sector abi.SectorID, read storiface.SectorFileType, write storiface.SectorFileType) (bool, error)                                  //perm:admin
 	StorageList(ctx context.Context) (map[storiface.ID][]storiface.Decl, error)                                                                                            //perm:admin
-	StorageListSelected(ctx context.Context, selected map[storiface.ID]string) (map[storiface.ID][]storiface.Decl, error)                                                  //perm:admin
 	StorageGetLocks(ctx context.Context) (storiface.SectorLocks, error)                                                                                                    //perm:admin
 
-	StorageLocal(ctx context.Context, onlySeal bool) (map[storiface.ID]string, error) //perm:admin
-	StorageStat(ctx context.Context, id storiface.ID) (fsutil.FsStat, error)          //perm:admin
+	StorageLocal(ctx context.Context) (map[storiface.ID]string, error)       //perm:admin
+	StorageStat(ctx context.Context, id storiface.ID) (fsutil.FsStat, error) //perm:admin
 
 	MarketImportDealData(ctx context.Context, propcid cid.Cid, path string) error                                                                                                        //perm:write
 	MarketListDeals(ctx context.Context) ([]*MarketDeal, error)                                                                                                                          //perm:read
@@ -281,14 +271,9 @@ type StorageMiner interface {
 	// the path specified when calling CreateBackup is within the base path
 	CreateBackup(ctx context.Context, fpath string) error //perm:admin
 
-	CheckProvable(ctx context.Context, pp abi.RegisteredPoStProof, sectors []storage.SectorRef, update []bool, expensive bool) (map[abi.SectorNumber]string, error) //perm:admin
+	CheckProvable(ctx context.Context, pp abi.RegisteredPoStProof, sectors []storage.SectorRef, expensive bool) (map[abi.SectorNumber]string, error) //perm:admin
 
 	ComputeProof(ctx context.Context, ssi []builtin.ExtendedSectorInfo, rand abi.PoStRandomness, poStEpoch abi.ChainEpoch, nv abinetwork.Version) ([]builtin.PoStProof, error) //perm:read
-	// octopus:
-	FullNodeList(ctx context.Context) ([]FnpItem, error)     // perm:read
-	FullNodeAdd(ctx context.Context, info string) error      // perm:admin
-	FullNodeRemove(ctx context.Context, index int) error     // perm:admin
-	FullNodeSetCurrent(ctx context.Context, index int) error // perm:admin
 }
 
 var _ storiface.WorkerReturn = *new(StorageMiner)

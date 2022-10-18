@@ -7,10 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/filecoin-project/go-address"
-	"os"
 	"reflect"
-	"strconv"
 	"time"
 
 	"golang.org/x/xerrors"
@@ -47,7 +44,7 @@ var fsmPlanners = map[SectorState]func(events []statemachine.Event, state *Secto
 
 	UndefinedSectorState: planOne(
 		on(SectorStart{}, WaitDeals),
-		on(SectorStartCC{}, ZeroPacking),
+		on(SectorStartCC{}, Packing),
 	),
 	Empty: planOne( // deprecated
 		on(SectorAddPiece{}, AddPiece),
@@ -64,17 +61,9 @@ var fsmPlanners = map[SectorState]func(events []statemachine.Event, state *Secto
 		on(SectorAddPieceFailed{}, AddPieceFailed),
 	),
 	Packing: planOne(on(SectorPacked{}, GetTicket)),
-	ZeroPacking: planOne(
-		on(SectorPacked{}, GetTicket),
-		on(SectorPackedForRecovery{}, PreCommit1),
-	),
 	GetTicket: planOne(
 		on(SectorTicket{}, PreCommit1),
 		on(SectorCommitFailed{}, CommitFailed),
-	),
-	Recovery: planOne(
-		on(SectorCCRecovery{}, ZeroPacking),
-		// TODO: octopus: recovery: event to follow deal recovery flow.
 	),
 	PreCommit1: planOne(
 		on(SectorPreCommit1{}, PreCommit2),
@@ -87,8 +76,6 @@ var fsmPlanners = map[SectorState]func(events []statemachine.Event, state *Secto
 		on(SectorPreCommit2{}, PreCommitting),
 		on(SectorSealPreCommit2Failed{}, SealPreCommit2Failed),
 		on(SectorSealPreCommit1Failed{}, SealPreCommit1Failed),
-		on(SectorRecoverFailed{}, FailedUnrecoverable),
-		on(SectorRecovered{}, FinalizeSector),
 	),
 	PreCommitting: planOne(
 		on(SectorPreCommitBatch{}, SubmitPreCommitBatch),
@@ -131,13 +118,11 @@ var fsmPlanners = map[SectorState]func(events []statemachine.Event, state *Secto
 		on(SectorCommitSubmitted{}, CommitWait),
 		on(SectorSubmitCommitAggregate{}, SubmitCommitAggregate),
 		on(SectorCommitFailed{}, CommitFailed),
-		on(SectorCommitSubmitFailed{}, SubmitCommitFailed),
 	),
 	SubmitCommitAggregate: planOne(
 		on(SectorCommitAggregateSent{}, CommitAggregateWait),
 		on(SectorCommitFailed{}, CommitFailed),
 		on(SectorRetrySubmitCommit{}, SubmitCommit),
-		on(SectorCommitSubmitFailed{}, SubmitCommitFailed),
 	),
 	CommitWait: planOne(
 		on(SectorProving{}, FinalizeSector),
@@ -230,10 +215,6 @@ var fsmPlanners = map[SectorState]func(events []statemachine.Event, state *Secto
 		on(SectorDealsExpired{}, DealsExpired),
 		on(SectorInvalidDealIDs{}, RecoverDealIDs),
 	),
-	// to cool down submitCommit->submitCommit, add this state
-	SubmitCommitFailed: planOne(
-		on(SectorRetrySubmitCommit{}, SubmitCommit),
-	),
 	ComputeProofFailed: planOne(
 		on(SectorRetryComputeProof{}, Committing),
 		on(SectorSealPreCommit1Failed{}, SealPreCommit1Failed),
@@ -304,8 +285,6 @@ var fsmPlanners = map[SectorState]func(events []statemachine.Event, state *Secto
 	Proving: planOne(
 		on(SectorFaultReported{}, FaultReported),
 		on(SectorFaulty{}, Faulty),
-		// octopus: if storage files are missing, use recover.
-		on(SectorRecover{}, Recovery),
 		on(SectorMarkForUpdate{}, Available),
 	),
 	Available: planOne(
@@ -341,42 +320,21 @@ var fsmPlanners = map[SectorState]func(events []statemachine.Event, state *Secto
 	FaultReported: final, // not really supported right now
 
 	FaultedFinal: final,
-	Removed: planOne(
-		on(SectorRecover{}, Recovery),
-	),
-	//Removed:      finalRemoved,
+	Removed:      finalRemoved,
 
 	FailedUnrecoverable: final,
 }
 
 func (state *SectorInfo) logAppend(l Log) {
-	//if len(state.Log) > 8000 {
-	//	log.Warnw("truncating sector log", "sector", state.SectorNumber)
-	//	state.Log[2000] = Log{
-	//		Timestamp: uint64(time.Now().Unix()),
-	//		Message:   "truncating log (above 8000 entries)",
-	//		Kind:      fmt.Sprintf("truncate"),
-	//	}
-	//
-	//	state.Log = append(state.Log[:2000], state.Log[6000:]...)
-	//}
-	//
-	//state.Log = append(state.Log, l)
-	maxSectorLogs := 50
-	maxSectorLogsStr := os.Getenv("SECTOR_MAX_LOG_ENTRIES")
-	if maxSectorLogsStr != "" {
-		maxSectorLogs, _ = strconv.Atoi(maxSectorLogsStr)
-	}
-	if len(state.Log) > maxSectorLogs {
+	if len(state.Log) > 8000 {
 		log.Warnw("truncating sector log", "sector", state.SectorNumber)
-		o1 := maxSectorLogs / 4
-		o2 := maxSectorLogs * 3 / 4
-		state.Log[o1] = Log{
+		state.Log[2000] = Log{
 			Timestamp: uint64(time.Now().Unix()),
-			Message:   fmt.Sprintf("truncating log (above %d entries)", maxSectorLogs),
+			Message:   "truncating log (above 8000 entries)",
 			Kind:      fmt.Sprintf("truncate"),
 		}
-		state.Log = append(state.Log[:o1+1], state.Log[o2:]...)
+
+		state.Log = append(state.Log[:2000], state.Log[6000:]...)
 	}
 
 	state.Log = append(state.Log, l)
@@ -498,18 +456,6 @@ func (m *Sealing) plan(events []statemachine.Event, state *SectorInfo) (func(sta
 		log.Errorw("update sector stats", "error", err)
 	}
 
-	ctx := context.Background()
-
-	mid, err := address.IDFromAddress(m.maddr)
-	if err != nil {
-		panic(err)
-	}
-
-	err = m.setSectorInfoToRedis(ctx, mid, state)
-	if err != nil {
-		log.Errorf("set sector info to redis error: %v", err)
-	}
-
 	switch state.State {
 	// Happy path
 	case Empty:
@@ -520,10 +466,6 @@ func (m *Sealing) plan(events []statemachine.Event, state *SectorInfo) (func(sta
 		return m.handleAddPiece, processed, nil
 	case Packing:
 		return m.handlePacking, processed, nil
-	case ZeroPacking:
-		return m.handleZeroPacking, processed, nil
-	case Recovery:
-		return m.handleRecover, processed, nil
 	case GetTicket:
 		return m.handleGetTicket, processed, nil
 	case PreCommit1:
@@ -590,8 +532,6 @@ func (m *Sealing) plan(events []statemachine.Event, state *SectorInfo) (func(sta
 		return m.handleComputeProofFailed, processed, nil
 	case CommitFailed:
 		return m.handleCommitFailed, processed, nil
-	case SubmitCommitFailed:
-		return m.handleCommitSubmitFailed, processed, nil
 	case CommitFinalizeFailed:
 		fallthrough
 	case FinalizeFailed:
@@ -653,8 +593,6 @@ func (m *Sealing) plan(events []statemachine.Event, state *SectorInfo) (func(sta
 		log.Error("sector update with undefined state!")
 	case FailedUnrecoverable:
 		log.Errorf("sector %d failed unrecoverably", state.SectorNumber)
-	case Commit1Failed:
-		log.Errorf("octopus: sector %v commit1 failed", state.SectorNumber)
 	default:
 		log.Errorf("unexpected sector update state: %s", state.State)
 	}
@@ -725,8 +663,6 @@ func planCommitting(events []statemachine.Event, state *SectorInfo) (uint64, err
 			state.State = CommitFailed
 		case SectorRetryCommitWait:
 			state.State = CommitWait
-		case SectorCommit1Failed:
-			state.State = Commit1Failed
 		default:
 			return uint64(i), xerrors.Errorf("planCommitting got event of unknown type %T, events: %+v", event.User, events)
 		}
@@ -743,8 +679,7 @@ func (m *Sealing) restartSectors(ctx context.Context) error {
 	}
 
 	for _, sector := range trackedSectors {
-		log.Infof("octopus: restart sector number=%v state=%v", sector.SectorNumber, sector.State)
-		if err := m.SectorsSend(uint64(sector.SectorNumber), SectorRestart{}); err != nil {
+		if err := m.sectors.Send(uint64(sector.SectorNumber), SectorRestart{}); err != nil {
 			log.Errorf("restarting sector %d: %+v", sector.SectorNumber, err)
 		}
 	}
@@ -756,7 +691,7 @@ func (m *Sealing) restartSectors(ctx context.Context) error {
 
 func (m *Sealing) ForceSectorState(ctx context.Context, id abi.SectorNumber, state SectorState) error {
 	m.startupWait.Wait()
-	return m.SectorsSend(id, SectorForceState{state})
+	return m.sectors.Send(id, SectorForceState{state})
 }
 
 // as sector has been removed, it's no needs to care about later events,
