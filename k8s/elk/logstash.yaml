@@ -1,0 +1,85 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logstash-pipelines
+data:
+  logstash.conf: |
+    input {
+      beats {
+        port => 5044
+      }
+    }
+    output {
+      elasticsearch {
+        hosts => ["192.168.101.173:9200"]
+      }
+    }
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logstash
+  labels:
+    k8s-app: logstash
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: logstash
+  template:
+    metadata:
+      labels:
+        k8s-app: logstash
+    spec:
+      nodeName: storage
+      volumes:
+      - name: config
+        configMap:
+          name: logstash-config
+          defaultMode: 420
+      - name: pipelines
+        configMap:
+          name: logstash-pipelines
+          defaultMode: 420
+      containers:
+      - name: logstash
+        image: logstash:7.13.4
+        ports:
+        - containerPort: 5044
+          protocol: TCP
+        - containerPort: 5000
+          protocol: TCP
+        - containerPort: 5000
+          protocol: UDP
+        - containerPort: 9600
+          protocol: TCP
+        env:
+        - name: ELASTICSEARCH_HOSTS
+          value: "http://192.168.101.173:9200"
+        - name: LS_JAVA_OPTS
+          value: "-Xms512m -Xmx512m"
+        volumeMounts:
+        - name: pipelines
+          mountPath: /usr/share/logstash/pipeline
+
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: logstash
+spec:
+  ports:
+  - name: logstash
+    protocol: TCP
+    port: 80
+    targetPort: 9600
+  - name: filebeat
+    protocol: TCP
+    port: 5044
+    targetPort: 5044
+  selector:
+    app: logstash
+  type: ClusterIP
+  sessionAffinity: None

@@ -1,0 +1,19 @@
+FROM registry-intl.cn-heyuan.aliyuncs.com/sga_octopus/poster-base:v1.1
+
+ENV NVIDIA_VISIBLE_DEVICES all
+ENV NVIDIA_DRIVER_CAPABILITIES compute,utility
+
+ADD libhwloc.so.15      /lib/
+ADD libOpenCL.so.1      /lib/
+ADD libgcc_s.so.1       /lib/
+ADD libpthread.so.0     /lib/
+ADD libm.so.6           /lib/
+ADD libdl.so.2          /lib/
+ADD libc.so.6           /lib/
+ADD libudev.so.1        /lib/
+ADD libltdl.so.7        /lib/
+
+ADD lotus-miner         /usr/local/bin/
+ADD start-miner.sh      /usr/local/bin/
+
+ENTRYPOINT ["sh", "-c", "sleep infinity"]

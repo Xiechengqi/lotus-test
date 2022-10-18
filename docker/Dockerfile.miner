@@ -1,0 +1,24 @@
+FROM registry-intl.ap-southeast-1.aliyuncs.com/sga_octopus/base:fpga.v1.0
+
+ENV DEBIAN_FRONTEND noninteractive
+
+RUN apt-get update -y && apt-get install ca-certificates tree htop telnet redis-tools zsh wget curl fuse libfuse-dev openjdk-8-jdk -y
+
+ADD libhwloc.so.15      /lib/
+ADD libOpenCL.so.1      /lib/
+ADD libgcc_s.so.1       /lib/
+ADD libpthread.so.0     /lib/
+ADD libm.so.6           /lib/
+ADD libdl.so.2          /lib/
+ADD libc.so.6           /lib/
+ADD libudev.so.1        /lib/
+ADD libltdl.so.7        /lib/
+ADD libhwloc.so.5	/lib/
+ADD libnuma.so.1 	/lib/
+
+ADD lotus-miner         /usr/local/bin/
+
+ADD init-miner.sh       /usr/local/bin/
+ADD start-miner.sh      /usr/local/bin/
+
+ENTRYPOINT ["sh", "-c", "sleep infinity"]

@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: daemon-calibnet
+spec:
+  selector:
+    matchLabels:
+      app: daemon-calibnet
+  template:
+    metadata:
+      labels:
+        app: daemon-calibnet
+      annotations:
+        "cni.projectcalico.org/ipv4pools": "[\"miner-ipv4-ippool\"]"
+    spec:
+      nodeName: miner01
+      dnsPolicy: ClusterFirst
+      hostNetwork: true
+      priorityClassName: system-node-critical
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: daemon-calibnet
+        image: registry.cn-hangzhou.aliyuncs.com/ali_octopus/daemon:v1.16
+        command: [ "sh", "-c", "/usr/local/bin/start-daemon.sh" ]
+        volumeMounts:
+        - name: daemon-config
+          mountPath: /root/.lotus
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: status.podIP
+        - name: LOG_PATH
+          value: /root/.lotus/logs
+      volumes:
+      - name: daemon-config
+        hostPath:
+          path: /scratch/calibnet/daemon
+      imagePullSecrets:
+      - name: registry-secret
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: daemon-calibnet
+spec:
+  type: ClusterIP
+  clusterIP: 10.96.0.100
+  ports:
+  - port: 1234
+    targetPort: 1234
+    name: daemon
+  selector:
+    app: daemon-calibnet
